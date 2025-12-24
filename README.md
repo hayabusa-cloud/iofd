@@ -78,24 +78,6 @@ fd.SetCloexec(true)    // Set FD_CLOEXEC
 fd.Dup()               // Duplicate with CLOEXEC
 ```
 
-## Architecture
-
-```
-┌─────────────────────────────────────────────────────────┐
-│                    User Application                     │
-├─────────────────────────────────────────────────────────┤
-│                      iofd API                           │
-│  ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌───────────┐  │
-│  │   FD    │  │ EventFD │  │ TimerFD │  │  PidFD    │  │
-│  └────┬────┘  └────┬────┘  └────┬────┘  └─────┬─────┘  │
-├───────┴────────────┴───────────┴──────────────┴─────────┤
-│                       zcall                             │
-│              Raw Assembly Syscalls                      │
-├─────────────────────────────────────────────────────────┤
-│                   Operating System                      │
-└─────────────────────────────────────────────────────────┘
-```
-
 ## Platform Support
 
 | Platform | FD Core | EventFD | TimerFD | PidFD | MemFD | SignalFD |
