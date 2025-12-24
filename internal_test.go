@@ -759,3 +759,279 @@ func TestSetCloexec_Success(t *testing.T) {
 		t.Errorf("SetCloexec(false) failed: %v", err)
 	}
 }
+
+// =============================================================================
+// Constructor Failure Tests
+// =============================================================================
+
+// TestNewEventFD_InvalidFlags tests newEventFD with invalid flags.
+func TestNewEventFD_InvalidFlags(t *testing.T) {
+	// Use an extremely invalid flags value to trigger EINVAL
+	_, err := newEventFD(0, 0xFFFFFFFF)
+	if err == nil {
+		t.Error("newEventFD with invalid flags should fail")
+	}
+	t.Logf("newEventFD(invalid flags) error: %v", err)
+}
+
+// TestNewSignalFD_InvalidFlags tests newSignalFD with invalid flags.
+func TestNewSignalFD_InvalidFlags(t *testing.T) {
+	var mask SigSet
+	mask.Add(SIGUSR1)
+	// Use invalid flags to trigger EINVAL
+	_, err := newSignalFD(mask, 0xFFFFFFFF)
+	if err == nil {
+		t.Error("newSignalFD with invalid flags should fail")
+	}
+	t.Logf("newSignalFD(invalid flags) error: %v", err)
+}
+
+// TestNewMemFD_InvalidFlags tests newMemFD with invalid flags.
+func TestNewMemFD_InvalidFlags(t *testing.T) {
+	// Use invalid flags combination to trigger EINVAL
+	_, err := newMemFD("test", 0xFFFFFFFF)
+	if err == nil {
+		t.Error("newMemFD with invalid flags should fail")
+	}
+	t.Logf("newMemFD(invalid flags) error: %v", err)
+}
+
+// TestNewMemFD_HugeTLBWithoutPrivilege tests newMemFD with HUGETLB flag.
+func TestNewMemFD_HugeTLBWithoutPrivilege(t *testing.T) {
+	// MFD_HUGETLB may fail without proper privileges or huge page configuration
+	_, err := newMemFD("test", MFD_CLOEXEC|MFD_HUGETLB)
+	if err != nil {
+		t.Logf("newMemFD(HUGETLB) error (expected without privileges): %v", err)
+	}
+	// Either success or failure is acceptable depending on system configuration
+}
+
+// =============================================================================
+// Additional Error Path Tests
+// =============================================================================
+
+// TestSignalFD_ReadPartialBuffer tests SignalFD Read with various buffer scenarios.
+func TestSignalFD_ReadPartialBuffer(t *testing.T) {
+	var mask SigSet
+	mask.Add(SIGUSR1)
+	sfd, err := NewSignalFD(mask)
+	if err != nil {
+		t.Fatalf("NewSignalFD failed: %v", err)
+	}
+	defer sfd.Close()
+
+	// ReadInto with exactly 128 bytes (minimum required)
+	buf := make([]byte, 128)
+	_, err = sfd.ReadInto(buf)
+	// Should return EAGAIN since no signal is pending
+	if err != iox.ErrWouldBlock && err != nil {
+		t.Logf("ReadInto(128) error: %v", err)
+	}
+
+	// ReadInto with more than 128 bytes
+	largeBuf := make([]byte, 256)
+	_, err = sfd.ReadInto(largeBuf)
+	if err != iox.ErrWouldBlock && err != nil {
+		t.Logf("ReadInto(256) error: %v", err)
+	}
+}
+
+// TestEventFD_SignalPartialWrite tests Signal behavior.
+func TestEventFD_SignalPartialWrite(t *testing.T) {
+	efd, err := newEventFD(0, EFD_NONBLOCK|EFD_CLOEXEC)
+	if err != nil {
+		t.Fatalf("newEventFD failed: %v", err)
+	}
+	defer efd.Close()
+
+	// Signal with value 1
+	err = efd.Signal(1)
+	if err != nil {
+		t.Errorf("Signal(1) failed: %v", err)
+	}
+
+	// Signal with value 0 should be no-op
+	err = efd.Signal(0)
+	if err != nil {
+		t.Errorf("Signal(0) should succeed: %v", err)
+	}
+
+	// Read the value
+	val, err := efd.Wait()
+	if err != nil {
+		t.Errorf("Wait failed: %v", err)
+	}
+	if val != 1 {
+		t.Errorf("Expected 1, got %d", val)
+	}
+}
+
+// TestTimerFD_ReadPartial tests TimerFD Read behavior.
+func TestTimerFD_ReadPartial(t *testing.T) {
+	tfd, err := newTimerFD(CLOCK_MONOTONIC, TFD_NONBLOCK|TFD_CLOEXEC)
+	if err != nil {
+		t.Fatalf("newTimerFD failed: %v", err)
+	}
+	defer tfd.Close()
+
+	// ReadInto with exactly 8 bytes
+	buf := make([]byte, 8)
+	_, err = tfd.ReadInto(buf)
+	// Should return EAGAIN since timer is not armed
+	if err != iox.ErrWouldBlock && err != nil {
+		t.Logf("ReadInto(8) error: %v", err)
+	}
+
+	// ReadInto with more than 8 bytes
+	largeBuf := make([]byte, 16)
+	_, err = tfd.ReadInto(largeBuf)
+	if err != iox.ErrWouldBlock && err != nil {
+		t.Logf("ReadInto(16) error: %v", err)
+	}
+}
+
+// TestFD_DupWithValidFD tests Dup on a valid file descriptor.
+func TestFD_DupWithValidFD(t *testing.T) {
+	efd, err := newEventFD(0, EFD_NONBLOCK|EFD_CLOEXEC)
+	if err != nil {
+		t.Fatalf("newEventFD failed: %v", err)
+	}
+	defer efd.Close()
+
+	// Dup should succeed
+	newFd, err := efd.fd.Dup()
+	if err != nil {
+		t.Fatalf("Dup failed: %v", err)
+	}
+	defer newFd.Close()
+
+	// Both FDs should be valid
+	if !efd.fd.Valid() {
+		t.Error("Original FD should be valid")
+	}
+	if !newFd.Valid() {
+		t.Error("New FD should be valid")
+	}
+
+	// Write to original, read from dup
+	err = efd.Signal(42)
+	if err != nil {
+		t.Errorf("Signal failed: %v", err)
+	}
+
+	// Read from the duplicated fd
+	var buf [8]byte
+	n, err := newFd.Read(buf[:])
+	if err != nil {
+		t.Errorf("Read from dup failed: %v", err)
+	}
+	if n != 8 {
+		t.Errorf("Expected 8 bytes, got %d", n)
+	}
+}
+
+// TestConcurrentClose tests concurrent Close calls.
+func TestConcurrentClose(t *testing.T) {
+	efd, err := newEventFD(0, EFD_NONBLOCK|EFD_CLOEXEC)
+	if err != nil {
+		t.Fatalf("newEventFD failed: %v", err)
+	}
+
+	// Launch multiple goroutines to close concurrently
+	done := make(chan bool, 10)
+	for i := 0; i < 10; i++ {
+		go func() {
+			efd.Close()
+			done <- true
+		}()
+	}
+
+	// Wait for all goroutines
+	for i := 0; i < 10; i++ {
+		<-done
+	}
+
+	// FD should be invalid after close
+	if efd.fd.Valid() {
+		t.Error("FD should be invalid after close")
+	}
+}
+
+// TestFD_ConcurrentReadWrite tests concurrent Read/Write operations.
+func TestFD_ConcurrentReadWrite(t *testing.T) {
+	efd, err := newEventFD(0, EFD_NONBLOCK|EFD_CLOEXEC)
+	if err != nil {
+		t.Fatalf("newEventFD failed: %v", err)
+	}
+	defer efd.Close()
+
+	done := make(chan bool, 20)
+
+	// Writers
+	for i := 0; i < 10; i++ {
+		go func() {
+			efd.Signal(1)
+			done <- true
+		}()
+	}
+
+	// Readers
+	for i := 0; i < 10; i++ {
+		go func() {
+			efd.Wait()
+			done <- true
+		}()
+	}
+
+	// Wait for all goroutines
+	for i := 0; i < 20; i++ {
+		<-done
+	}
+}
+
+// TestMemFD_TruncateAndSize tests Truncate and Size operations.
+func TestMemFD_TruncateAndSize(t *testing.T) {
+	mfd, err := newMemFD("test", MFD_CLOEXEC)
+	if err != nil {
+		t.Fatalf("newMemFD failed: %v", err)
+	}
+	defer mfd.Close()
+
+	// Initial size should be 0
+	size, err := mfd.Size()
+	if err != nil {
+		t.Fatalf("Size failed: %v", err)
+	}
+	if size != 0 {
+		t.Errorf("Initial size should be 0, got %d", size)
+	}
+
+	// Truncate to 4096
+	err = mfd.Truncate(4096)
+	if err != nil {
+		t.Fatalf("Truncate failed: %v", err)
+	}
+
+	// Size should now be 4096
+	size, err = mfd.Size()
+	if err != nil {
+		t.Fatalf("Size failed: %v", err)
+	}
+	if size != 4096 {
+		t.Errorf("Size should be 4096, got %d", size)
+	}
+
+	// Truncate to smaller size
+	err = mfd.Truncate(1024)
+	if err != nil {
+		t.Fatalf("Truncate failed: %v", err)
+	}
+
+	size, err = mfd.Size()
+	if err != nil {
+		t.Fatalf("Size failed: %v", err)
+	}
+	if size != 1024 {
+		t.Errorf("Size should be 1024, got %d", size)
+	}
+}
