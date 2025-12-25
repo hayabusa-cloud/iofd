@@ -6,30 +6,21 @@
 
 package iofd
 
-// Syscall numbers for Linux.
-// These are architecture-specific; values here are for amd64.
-// Other architectures may require separate const_linux_<arch>.go files.
-const (
-	SYS_DUP       = 32
-	SYS_DUP2      = 33
-	SYS_DUP3      = 292
-	SYS_FCNTL     = 72
-	SYS_FTRUNCATE = 77
-	SYS_FSTAT     = 5
-)
-
 // File descriptor flags for fcntl F_GETFD/F_SETFD.
+// These are consistent across all Linux architectures.
 const (
 	FD_CLOEXEC = 1
 )
 
 // File status flags for fcntl F_GETFL/F_SETFL.
+// These are consistent across all Linux architectures.
 const (
 	O_NONBLOCK = 0x800
 	O_CLOEXEC  = 0x80000
 )
 
 // fcntl commands.
+// These are consistent across all Linux architectures.
 const (
 	F_DUPFD         = 0
 	F_GETFD         = 1

@@ -157,19 +157,11 @@ func (fd *FD) Dup() (FD, error) {
 	if raw < 0 {
 		return InvalidFD, ErrClosed
 	}
-	newfd, errno := zcall.Syscall4(SYS_DUP3, uintptr(raw), 0, O_CLOEXEC, 0)
+	// Use fcntl F_DUPFD_CLOEXEC for atomic dup with CLOEXEC.
+	// This is portable across all architectures and platforms.
+	newfd, errno := zcall.Syscall4(SYS_FCNTL, uintptr(raw), F_DUPFD_CLOEXEC, 0, 0)
 	if errno != 0 {
-		// Fallback to dup + fcntl if dup3 not available
-		newfd, errno = zcall.Syscall4(SYS_DUP, uintptr(raw), 0, 0, 0)
-		if errno != 0 {
-			return InvalidFD, errFromErrno(errno)
-		}
-		// Set CLOEXEC manually
-		_, errno = zcall.Syscall4(SYS_FCNTL, newfd, F_SETFD, FD_CLOEXEC, 0)
-		if errno != 0 {
-			zcall.Close(newfd)
-			return InvalidFD, errFromErrno(errno)
-		}
+		return InvalidFD, errFromErrno(errno)
 	}
 	return FD(newfd), nil
 }
