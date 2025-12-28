@@ -9,12 +9,7 @@ package iofd
 // Syscall numbers for FreeBSD.
 // Reference: /usr/include/sys/syscall.h (FreeBSD 14.x)
 const (
-	SYS_DUP       = 41
-	SYS_DUP2      = 90
-	SYS_DUP3      = 0 // Not available; use fcntl F_DUPFD_CLOEXEC
-	SYS_FCNTL     = 92
-	SYS_FTRUNCATE = 480 // freebsd6_ftruncate
-	SYS_FSTAT     = 551 // freebsd12_fstat
+	SYS_FCNTL = 92
 )
 
 // File descriptor flags for fcntl F_GETFD/F_SETFD.
