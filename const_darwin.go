@@ -9,12 +9,7 @@ package iofd
 // Syscall numbers for Darwin.
 // Reference: /usr/include/sys/syscall.h (XNU kernel)
 const (
-	SYS_DUP       = 41
-	SYS_DUP2      = 90
-	SYS_DUP3      = 0 // Darwin does not have dup3; use dup2 + fcntl
-	SYS_FCNTL     = 92
-	SYS_FTRUNCATE = 201
-	SYS_FSTAT     = 339 // fstat64
+	SYS_FCNTL = 92
 )
 
 // File descriptor flags for fcntl F_GETFD/F_SETFD.

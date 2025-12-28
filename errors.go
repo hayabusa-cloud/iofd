@@ -23,7 +23,4 @@ var (
 
 	// ErrPermission indicates permission denied.
 	ErrPermission = errors.New("fd: permission denied")
-
-	// ErrOverflow indicates a counter overflow (for eventfd).
-	ErrOverflow = errors.New("fd: counter overflow")
 )
