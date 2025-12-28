@@ -1463,3 +1463,68 @@ func TestSetCloexec_SetFDError(t *testing.T) {
 		t.Error("SetCloexec should fail on closed fd")
 	}
 }
+
+// TestEventFD_SignalOverflow tests Signal returning ErrWouldBlock on counter overflow.
+func TestEventFD_SignalOverflow(t *testing.T) {
+	efd, err := newEventFD(0, EFD_NONBLOCK|EFD_CLOEXEC)
+	if err != nil {
+		t.Fatalf("newEventFD failed: %v", err)
+	}
+	defer efd.Close()
+
+	// eventfd max counter value is 0xFFFFFFFFFFFFFFFE (2^64 - 2)
+	// Signal with max-1 to get counter near max
+	maxVal := uint64(0xFFFFFFFFFFFFFFFE)
+	err = efd.Signal(maxVal - 1)
+	if err != nil {
+		t.Fatalf("Signal(max-1) failed: %v", err)
+	}
+
+	// Now try to signal with 2, which would overflow
+	// This should return ErrWouldBlock
+	err = efd.Signal(2)
+	if err != iox.ErrWouldBlock {
+		t.Errorf("Signal overflow: expected ErrWouldBlock, got %v", err)
+	}
+}
+
+// TestSetNonblock_RaceClose attempts to trigger F_SETFL error by racing close.
+// This test tries to cover the F_SETFL error path by closing the fd
+// between F_GETFL and F_SETFL. Due to timing, coverage is not guaranteed.
+func TestSetNonblock_RaceClose(t *testing.T) {
+	for i := 0; i < 1000; i++ {
+		efd, err := newEventFD(0, EFD_CLOEXEC)
+		if err != nil {
+			t.Fatalf("newEventFD failed: %v", err)
+		}
+		rawFd := efd.fd.Raw()
+
+		// Close immediately while trying SetNonblock
+		go func() {
+			zcall.Close(uintptr(rawFd))
+		}()
+
+		// This may fail with ErrClosed (F_GETFL fails) or
+		// with EBADF (F_SETFL fails) if timing is right
+		fd := NewFD(int(rawFd))
+		_ = fd.SetNonblock(true)
+	}
+}
+
+// TestSetCloexec_RaceClose attempts to trigger F_SETFD error by racing close.
+func TestSetCloexec_RaceClose(t *testing.T) {
+	for i := 0; i < 1000; i++ {
+		efd, err := newEventFD(0, EFD_NONBLOCK)
+		if err != nil {
+			t.Fatalf("newEventFD failed: %v", err)
+		}
+		rawFd := efd.fd.Raw()
+
+		go func() {
+			zcall.Close(uintptr(rawFd))
+		}()
+
+		fd := NewFD(int(rawFd))
+		_ = fd.SetCloexec(true)
+	}
+}
