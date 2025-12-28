@@ -51,6 +51,8 @@ func newTimerFD(clockid, flags uintptr) (*TimerFD, error) {
 
 // Fd returns the underlying file descriptor.
 // Implements PollFd interface.
+//
+//go:nosplit
 func (t *TimerFD) Fd() int {
 	return t.fd.Fd()
 }
@@ -59,6 +61,21 @@ func (t *TimerFD) Fd() int {
 // Implements PollCloser interface.
 func (t *TimerFD) Close() error {
 	return t.fd.Close()
+}
+
+// Valid reports whether the timerfd is still valid.
+//
+//go:nosplit
+func (t *TimerFD) Valid() bool {
+	return t.fd.Valid()
+}
+
+// Raw returns the raw file descriptor for use in tight loops.
+// The caller must ensure the TimerFD remains valid while using the raw fd.
+//
+//go:nosplit
+func (t *TimerFD) Raw() int32 {
+	return t.fd.Raw()
 }
 
 // Arm sets the timer to expire after initial nanoseconds.
@@ -137,43 +154,45 @@ func (t *TimerFD) Disarm() error {
 	return t.Arm(0, 0)
 }
 
-// Read reads the number of expirations since the last read.
+// Expirations reads the number of expirations since the last read.
 // Returns iox.ErrWouldBlock if no expirations have occurred (non-blocking mode).
 //
 // The returned value is the number of times the timer has expired since
 // the last successful read. For periodic timers, this may be > 1 if
 // multiple intervals elapsed before reading.
-func (t *TimerFD) Read() (uint64, error) {
+func (t *TimerFD) Expirations() (uint64, error) {
 	raw := t.fd.Raw()
 	if raw < 0 {
 		return 0, ErrClosed
 	}
 	var buf [8]byte
-	n, errno := zcall.Read(uintptr(raw), buf[:])
+	_, errno := zcall.Read(uintptr(raw), buf[:])
 	if errno != 0 {
-		if zcall.Errno(errno) == zcall.EAGAIN {
+		if errno == uintptr(zcall.EAGAIN) {
 			return 0, iox.ErrWouldBlock
 		}
 		return 0, errFromErrno(errno)
 	}
-	if n != 8 {
-		return 0, ErrInvalidParam
-	}
 	return binary.NativeEndian.Uint64(buf[:]), nil
 }
 
-// ReadInto reads expiration count into the provided buffer.
-// buf must be at least 8 bytes.
-func (t *TimerFD) ReadInto(buf []byte) (int, error) {
-	if len(buf) < 8 {
+// Read reads expiration count into the provided buffer.
+// Implements io.Reader interface.
+// p must be at least 8 bytes.
+// Returns iox.ErrWouldBlock if no expirations have occurred.
+func (t *TimerFD) Read(p []byte) (int, error) {
+	if len(p) < 8 {
 		return 0, ErrInvalidParam
 	}
 	raw := t.fd.Raw()
 	if raw < 0 {
 		return 0, ErrClosed
 	}
-	n, errno := zcall.Read(uintptr(raw), buf[:8])
+	n, errno := zcall.Read(uintptr(raw), p[:8])
 	if errno != 0 {
+		if errno == uintptr(zcall.EAGAIN) {
+			return 0, iox.ErrWouldBlock
+		}
 		return int(n), errFromErrno(errno)
 	}
 	return int(n), nil
@@ -227,4 +246,5 @@ var (
 	_ PollFd     = (*TimerFD)(nil)
 	_ PollCloser = (*TimerFD)(nil)
 	_ Timer      = (*TimerFD)(nil)
+	_ Reader     = (*TimerFD)(nil)
 )

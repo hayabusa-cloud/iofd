@@ -29,6 +29,10 @@ type SignalFD struct {
 
 // SigSet represents a signal set for signalfd operations.
 // On Linux amd64, this is a 64-bit mask where bit N represents signal N+1.
+//
+// Limitation: This implementation supports signals 1-64 only.
+// Real-time signals beyond SIGRTMIN+32 (signal 64) are not supported.
+// For most applications, standard signals (1-31) are sufficient.
 type SigSet uint64
 
 // Signal constants matching Linux signal numbers.
@@ -125,6 +129,10 @@ type SignalInfo struct {
 // signalInfoSize is the size of SignalInfo in bytes.
 const signalInfoSize = 128
 
+// Compile-time size check for SignalInfo.
+// Must match struct signalfd_siginfo from the Linux kernel.
+var _ [signalInfoSize]byte = [unsafe.Sizeof(SignalInfo{})]byte{}
+
 // NewSignalFD creates a new signalfd monitoring the given signal set.
 // The signalfd is created with SFD_NONBLOCK | SFD_CLOEXEC flags.
 //
@@ -150,6 +158,8 @@ func newSignalFD(mask SigSet, flags uintptr) (*SignalFD, error) {
 
 // Fd returns the underlying file descriptor.
 // Implements PollFd interface.
+//
+//go:nosplit
 func (s *SignalFD) Fd() int {
 	return s.fd.Fd()
 }
@@ -160,45 +170,62 @@ func (s *SignalFD) Close() error {
 	return s.fd.Close()
 }
 
-// Read reads signal information into the provided SignalInfo.
-// Returns iox.ErrWouldBlock if no signal is pending.
+// Valid reports whether the signalfd is still valid.
 //
-// Postcondition: On success, info contains the next pending signal.
-func (s *SignalFD) Read() (*SignalInfo, error) {
-	raw := s.fd.Raw()
-	if raw < 0 {
-		return nil, ErrClosed
-	}
-	var info SignalInfo
-	buf := (*[signalInfoSize]byte)(unsafe.Pointer(&info))[:]
-	n, errno := zcall.Read(uintptr(raw), buf)
-	if errno != 0 {
-		if zcall.Errno(errno) == zcall.EAGAIN {
-			return nil, iox.ErrWouldBlock
-		}
-		return nil, errFromErrno(errno)
-	}
-	if n != signalInfoSize {
-		return nil, ErrInvalidParam
-	}
-	return &info, nil
+//go:nosplit
+func (s *SignalFD) Valid() bool {
+	return s.fd.Valid()
 }
 
-// ReadInto reads signal information into the provided buffer.
-// buf must be at least 128 bytes.
-func (s *SignalFD) ReadInto(buf []byte) (int, error) {
-	if len(buf) < signalInfoSize {
+// Raw returns the raw file descriptor for use in tight loops.
+// The caller must ensure the SignalFD remains valid while using the raw fd.
+//
+//go:nosplit
+func (s *SignalFD) Raw() int32 {
+	return s.fd.Raw()
+}
+
+// Read reads signal information into the provided buffer.
+// Implements io.Reader interface.
+// p must be at least 128 bytes.
+// Returns iox.ErrWouldBlock if no signal is pending.
+func (s *SignalFD) Read(p []byte) (int, error) {
+	if len(p) < signalInfoSize {
 		return 0, ErrInvalidParam
 	}
 	raw := s.fd.Raw()
 	if raw < 0 {
 		return 0, ErrClosed
 	}
-	n, errno := zcall.Read(uintptr(raw), buf[:signalInfoSize])
+	n, errno := zcall.Read(uintptr(raw), p[:signalInfoSize])
 	if errno != 0 {
+		if errno == uintptr(zcall.EAGAIN) {
+			return 0, iox.ErrWouldBlock
+		}
 		return int(n), errFromErrno(errno)
 	}
 	return int(n), nil
+}
+
+// ReadInto reads signal information into a caller-provided SignalInfo.
+// Returns iox.ErrWouldBlock if no signal is pending.
+// This is the zero-allocation variant for use in hot paths.
+//
+// Postcondition: On success, info contains the next pending signal.
+func (s *SignalFD) ReadInto(info *SignalInfo) error {
+	raw := s.fd.Raw()
+	if raw < 0 {
+		return ErrClosed
+	}
+	buf := (*[signalInfoSize]byte)(unsafe.Pointer(info))[:]
+	_, errno := zcall.Read(uintptr(raw), buf)
+	if errno != 0 {
+		if errno == uintptr(zcall.EAGAIN) {
+			return iox.ErrWouldBlock
+		}
+		return errFromErrno(errno)
+	}
+	return nil
 }
 
 // SetMask updates the signal mask monitored by this signalfd.
@@ -235,4 +262,5 @@ const (
 var (
 	_ PollFd     = (*SignalFD)(nil)
 	_ PollCloser = (*SignalFD)(nil)
+	_ Reader     = (*SignalFD)(nil)
 )

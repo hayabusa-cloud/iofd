@@ -7,7 +7,6 @@
 package iofd
 
 import (
-	"encoding/binary"
 	"unsafe"
 
 	"code.hybscloud.com/iox"
@@ -49,6 +48,8 @@ func newEventFD(initval uint, flags uintptr) (*EventFD, error) {
 
 // Fd returns the underlying file descriptor.
 // Implements PollFd interface.
+//
+//go:nosplit
 func (e *EventFD) Fd() int {
 	return e.fd.Fd()
 }
@@ -57,6 +58,21 @@ func (e *EventFD) Fd() int {
 // Implements PollCloser interface.
 func (e *EventFD) Close() error {
 	return e.fd.Close()
+}
+
+// Valid reports whether the eventfd is still valid.
+//
+//go:nosplit
+func (e *EventFD) Valid() bool {
+	return e.fd.Valid()
+}
+
+// Raw returns the raw file descriptor for use in tight loops.
+// The caller must ensure the EventFD remains valid while using the raw fd.
+//
+//go:nosplit
+func (e *EventFD) Raw() int32 {
+	return e.fd.Raw()
 }
 
 // Signal increments the eventfd counter by val.
@@ -72,17 +88,12 @@ func (e *EventFD) Signal(val uint64) error {
 	if raw < 0 {
 		return ErrClosed
 	}
-	var buf [8]byte
-	binary.NativeEndian.PutUint64(buf[:], val)
-	n, errno := zcall.Write(uintptr(raw), buf[:])
+	_, errno := zcall.Write(uintptr(raw), unsafe.Slice((*byte)(unsafe.Pointer(&val)), 8))
 	if errno != 0 {
-		if zcall.Errno(errno) == zcall.EAGAIN {
+		if errno == uintptr(zcall.EAGAIN) {
 			return iox.ErrWouldBlock
 		}
 		return errFromErrno(errno)
-	}
-	if n != 8 {
-		return ErrInvalidParam
 	}
 	return nil
 }
@@ -97,23 +108,21 @@ func (e *EventFD) Wait() (uint64, error) {
 	if raw < 0 {
 		return 0, ErrClosed
 	}
-	var buf [8]byte
-	n, errno := zcall.Read(uintptr(raw), buf[:])
+	var val uint64
+	_, errno := zcall.Read(uintptr(raw), unsafe.Slice((*byte)(unsafe.Pointer(&val)), 8))
 	if errno != 0 {
-		if zcall.Errno(errno) == zcall.EAGAIN {
+		if errno == uintptr(zcall.EAGAIN) {
 			return 0, iox.ErrWouldBlock
 		}
 		return 0, errFromErrno(errno)
 	}
-	if n != 8 {
-		return 0, ErrInvalidParam
-	}
-	return binary.NativeEndian.Uint64(buf[:]), nil
+	return val, nil
 }
 
 // Read reads the eventfd counter into p.
 // p must be at least 8 bytes. Only the first 8 bytes are used.
 // This is a lower-level interface; prefer Wait() for typical usage.
+// Returns iox.ErrWouldBlock if the counter is zero.
 func (e *EventFD) Read(p []byte) (int, error) {
 	if len(p) < 8 {
 		return 0, ErrInvalidParam
@@ -130,8 +139,9 @@ func (e *EventFD) Read(p []byte) (int, error) {
 }
 
 // Write writes a value to the eventfd from p.
-// p must be at least 8 bytes containing a little-endian uint64.
+// p must be at least 8 bytes containing a native-endian uint64.
 // This is a lower-level interface; prefer Signal() for typical usage.
+// Returns iox.ErrWouldBlock if the counter would overflow.
 func (e *EventFD) Write(p []byte) (int, error) {
 	if len(p) < 8 {
 		return 0, ErrInvalidParam
@@ -147,16 +157,6 @@ func (e *EventFD) Write(p []byte) (int, error) {
 	return int(n), nil
 }
 
-// Value returns the current counter value without consuming it.
-// This uses a non-standard approach via /proc and should be used sparingly.
-// For most use cases, use Wait() instead.
-func (e *EventFD) Value() (uint64, error) {
-	// Note: There's no direct syscall to peek at eventfd value.
-	// The only way is to read (which consumes) or use /proc.
-	// For zero-allocation hot paths, this method should be avoided.
-	return 0, ErrInvalidParam
-}
-
 // eventfd flags
 const (
 	EFD_SEMAPHORE = 0x1
@@ -169,15 +169,6 @@ var (
 	_ PollFd     = (*EventFD)(nil)
 	_ PollCloser = (*EventFD)(nil)
 	_ Signaler   = (*EventFD)(nil)
+	_ Reader     = (*EventFD)(nil)
+	_ Writer     = (*EventFD)(nil)
 )
-
-// nativeEndian is the byte order of the native architecture.
-// Used for eventfd counter encoding.
-var nativeEndian = binary.NativeEndian
-
-// eventfdValuePtr returns a pointer to the value for zero-copy writes.
-//
-//go:nosplit
-func eventfdValuePtr(val *uint64) unsafe.Pointer {
-	return unsafe.Pointer(val)
-}
