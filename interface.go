@@ -73,7 +73,4 @@ type Timer interface {
 	Arm(initial, interval int64) error
 	// Disarm stops the timer.
 	Disarm() error
-	// Read reads the number of expirations since the last read.
-	// Returns iox.ErrWouldBlock if no expirations have occurred.
-	Read() (uint64, error)
 }

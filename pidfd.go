@@ -51,6 +51,8 @@ func newPidFD(pid int, flags uintptr) (*PidFD, error) {
 
 // Fd returns the underlying file descriptor.
 // Implements PollFd interface.
+//
+//go:nosplit
 func (p *PidFD) Fd() int {
 	return p.fd.Fd()
 }
@@ -59,6 +61,14 @@ func (p *PidFD) Fd() int {
 // Implements PollCloser interface.
 func (p *PidFD) Close() error {
 	return p.fd.Close()
+}
+
+// Raw returns the raw file descriptor for use in tight loops.
+// The caller must ensure the PidFD remains valid while using the raw fd.
+//
+//go:nosplit
+func (p *PidFD) Raw() int32 {
+	return p.fd.Raw()
 }
 
 // PID returns the process ID this pidfd refers to.
@@ -106,6 +116,8 @@ func (p *PidFD) GetFD(targetFD int) (FD, error) {
 }
 
 // Valid reports whether the pidfd is still valid.
+//
+//go:nosplit
 func (p *PidFD) Valid() bool {
 	return p.fd.Valid()
 }

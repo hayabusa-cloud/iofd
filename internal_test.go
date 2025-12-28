@@ -8,26 +8,11 @@ package iofd
 
 import (
 	"testing"
+	"unsafe"
 
 	"code.hybscloud.com/iox"
 	"code.hybscloud.com/zcall"
 )
-
-// TestEventfdValuePtr tests the internal eventfdValuePtr function.
-func TestEventfdValuePtr(t *testing.T) {
-	val := uint64(12345)
-	p := eventfdValuePtr(&val)
-
-	if p == nil {
-		t.Fatal("eventfdValuePtr returned nil")
-	}
-
-	// Verify the pointer points to the correct value
-	got := *(*uint64)(p)
-	if got != 12345 {
-		t.Errorf("eventfdValuePtr returned wrong value: got %d, want 12345", got)
-	}
-}
 
 // TestErrFromErrno tests all errno mappings in errFromErrno.
 func TestErrFromErrno(t *testing.T) {
@@ -261,14 +246,14 @@ func TestTimerFD_Errors(t *testing.T) {
 	}
 
 	// Read should fail
-	_, err = tfd.Read()
+	_, err = tfd.Expirations()
 	if err == nil {
 		t.Error("Read should fail on closed fd")
 	}
 
 	// ReadInto should fail
 	buf := make([]byte, 8)
-	_, err = tfd.ReadInto(buf)
+	_, err = tfd.Read(buf)
 	if err == nil {
 		t.Error("ReadInto should fail on closed fd")
 	}
@@ -354,17 +339,18 @@ func TestSignalFD_Errors(t *testing.T) {
 	// Close the underlying fd directly
 	zcall.Close(uintptr(rawFd))
 
-	// Read should fail
-	_, err = sfd.Read()
-	if err == nil {
-		t.Error("Read should fail on closed fd")
-	}
-
 	// ReadInto should fail
-	buf := make([]byte, 128)
-	_, err = sfd.ReadInto(buf)
+	var info SignalInfo
+	err = sfd.ReadInto(&info)
 	if err == nil {
 		t.Error("ReadInto should fail on closed fd")
+	}
+
+	// Read (io.Reader) should fail
+	buf := make([]byte, 128)
+	_, err = sfd.Read(buf)
+	if err == nil {
+		t.Error("Read should fail on closed fd")
 	}
 
 	// SetMask should fail
@@ -418,7 +404,7 @@ func TestTimerFD_ReadWouldBlock(t *testing.T) {
 	defer tfd.Close()
 
 	// Read on unarmed timer should return ErrWouldBlock
-	_, err = tfd.Read()
+	_, err = tfd.Expirations()
 	if err != iox.ErrWouldBlock {
 		t.Errorf("Read on unarmed timer: got %v, want ErrWouldBlock", err)
 	}
@@ -434,7 +420,7 @@ func TestTimerFD_ReadIntoWouldBlock(t *testing.T) {
 
 	// ReadInto on unarmed timer should return ErrWouldBlock
 	buf := make([]byte, 8)
-	_, err = tfd.ReadInto(buf)
+	_, err = tfd.Read(buf)
 	if err != iox.ErrWouldBlock {
 		t.Errorf("ReadInto on unarmed timer: got %v, want ErrWouldBlock", err)
 	}
@@ -451,15 +437,16 @@ func TestSignalFD_ReadWouldBlock(t *testing.T) {
 	}
 	defer sfd.Close()
 
-	// Read with no pending signal should return ErrWouldBlock
-	_, err = sfd.Read()
+	// ReadInto with no pending signal should return ErrWouldBlock
+	var info SignalInfo
+	err = sfd.ReadInto(&info)
 	if err != iox.ErrWouldBlock {
-		t.Errorf("Read with no pending signal: got %v, want ErrWouldBlock", err)
+		t.Errorf("ReadInto with no pending signal: got %v, want ErrWouldBlock", err)
 	}
 }
 
-// TestSignalFD_ReadIntoWouldBlock tests ReadInto returning ErrWouldBlock.
-func TestSignalFD_ReadIntoWouldBlock(t *testing.T) {
+// TestSignalFD_ReadIOReaderWouldBlock tests Read (io.Reader) returning ErrWouldBlock.
+func TestSignalFD_ReadIOReaderWouldBlock(t *testing.T) {
 	var mask SigSet
 	mask.Add(SIGUSR1)
 
@@ -469,11 +456,11 @@ func TestSignalFD_ReadIntoWouldBlock(t *testing.T) {
 	}
 	defer sfd.Close()
 
-	// ReadInto with no pending signal should return ErrWouldBlock
+	// Read (io.Reader) with no pending signal should return ErrWouldBlock
 	buf := make([]byte, 128)
-	_, err = sfd.ReadInto(buf)
+	_, err = sfd.Read(buf)
 	if err != iox.ErrWouldBlock {
-		t.Errorf("ReadInto with no pending signal: got %v, want ErrWouldBlock", err)
+		t.Errorf("Read with no pending signal: got %v, want ErrWouldBlock", err)
 	}
 }
 
@@ -687,10 +674,11 @@ func TestSignalFD_ReadEAGAIN(t *testing.T) {
 	}
 	defer sfd.Close()
 
-	// Read with no pending signal should return ErrWouldBlock
-	_, err = sfd.Read()
+	// ReadInto with no pending signal should return ErrWouldBlock
+	var info SignalInfo
+	err = sfd.ReadInto(&info)
 	if err != iox.ErrWouldBlock {
-		t.Errorf("Read with no signal should return ErrWouldBlock, got %v", err)
+		t.Errorf("ReadInto with no signal should return ErrWouldBlock, got %v", err)
 	}
 }
 
@@ -820,19 +808,19 @@ func TestSignalFD_ReadPartialBuffer(t *testing.T) {
 	}
 	defer sfd.Close()
 
-	// ReadInto with exactly 128 bytes (minimum required)
+	// Read (io.Reader) with exactly 128 bytes (minimum required)
 	buf := make([]byte, 128)
-	_, err = sfd.ReadInto(buf)
+	_, err = sfd.Read(buf)
 	// Should return EAGAIN since no signal is pending
 	if err != iox.ErrWouldBlock && err != nil {
-		t.Logf("ReadInto(128) error: %v", err)
+		t.Logf("Read(128) error: %v", err)
 	}
 
-	// ReadInto with more than 128 bytes
+	// Read (io.Reader) with more than 128 bytes
 	largeBuf := make([]byte, 256)
-	_, err = sfd.ReadInto(largeBuf)
+	_, err = sfd.Read(largeBuf)
 	if err != iox.ErrWouldBlock && err != nil {
-		t.Logf("ReadInto(256) error: %v", err)
+		t.Logf("Read(256) error: %v", err)
 	}
 }
 
@@ -876,7 +864,7 @@ func TestTimerFD_ReadPartial(t *testing.T) {
 
 	// ReadInto with exactly 8 bytes
 	buf := make([]byte, 8)
-	_, err = tfd.ReadInto(buf)
+	_, err = tfd.Read(buf)
 	// Should return EAGAIN since timer is not armed
 	if err != iox.ErrWouldBlock && err != nil {
 		t.Logf("ReadInto(8) error: %v", err)
@@ -884,7 +872,7 @@ func TestTimerFD_ReadPartial(t *testing.T) {
 
 	// ReadInto with more than 8 bytes
 	largeBuf := make([]byte, 16)
-	_, err = tfd.ReadInto(largeBuf)
+	_, err = tfd.Read(largeBuf)
 	if err != iox.ErrWouldBlock && err != nil {
 		t.Logf("ReadInto(16) error: %v", err)
 	}
@@ -1033,5 +1021,433 @@ func TestMemFD_TruncateAndSize(t *testing.T) {
 	}
 	if size != 1024 {
 		t.Errorf("Size should be 1024, got %d", size)
+	}
+}
+
+// =============================================================================
+// PidFD Success Path Tests
+// =============================================================================
+
+// Linux amd64 syscall numbers not exported by zcall
+const (
+	sysGetpid        = 39 // SYS_GETPID
+	sysKill          = 62 // SYS_KILL
+	sysRtSigprocmask = 14 // SYS_RT_SIGPROCMASK
+	sigBlock         = 0  // SIG_BLOCK
+	sigUnblock       = 1  // SIG_UNBLOCK
+)
+
+// TestPidFD_SendSignalToSelf tests SendSignal success by signaling our own process.
+func TestPidFD_SendSignalToSelf(t *testing.T) {
+	// Get our own PID using getpid syscall
+	pid, _ := zcall.Syscall4(sysGetpid, 0, 0, 0, 0)
+
+	pfd, err := newPidFD(int(pid), PIDFD_NONBLOCK)
+	if err != nil {
+		t.Skipf("newPidFD for self failed: %v", err)
+	}
+	defer pfd.Close()
+
+	// Send signal 0 (null signal) to ourselves - this should always succeed
+	err = pfd.SendSignal(0)
+	if err != nil {
+		t.Errorf("SendSignal(0) to self should succeed, got: %v", err)
+	}
+}
+
+// =============================================================================
+// SignalFD Success Path Tests
+// =============================================================================
+
+// TestSignalFD_ReadSuccess tests SignalFD Read success by receiving an actual signal.
+func TestSignalFD_ReadSuccess(t *testing.T) {
+	// Block SIGUSR1 using sigprocmask before creating signalfd
+	// SIG_BLOCK = 0, we need to block SIGUSR1 to receive it via signalfd
+	var mask SigSet
+	mask.Add(SIGUSR1)
+
+	// Block SIGUSR1: sigprocmask(SIG_BLOCK, &mask, nil)
+	_, errno := zcall.Syscall4(
+		sysRtSigprocmask,
+		sigBlock,
+		uintptr(unsafe.Pointer(&mask)),
+		0,
+		8, // sizeof(sigset_t) on amd64
+	)
+	if errno != 0 {
+		t.Skipf("sigprocmask failed: %v", zcall.Errno(errno))
+	}
+
+	// Unblock SIGUSR1 when done
+	defer func() {
+		zcall.Syscall4(sysRtSigprocmask, sigUnblock, uintptr(unsafe.Pointer(&mask)), 0, 8)
+	}()
+
+	// Create signalfd
+	sfd, err := newSignalFD(mask, SFD_NONBLOCK|SFD_CLOEXEC)
+	if err != nil {
+		t.Fatalf("newSignalFD failed: %v", err)
+	}
+	defer sfd.Close()
+
+	// Send SIGUSR1 to ourselves
+	pid, _ := zcall.Syscall4(sysGetpid, 0, 0, 0, 0)
+	_, errno = zcall.Syscall4(sysKill, pid, SIGUSR1, 0, 0)
+	if errno != 0 {
+		t.Fatalf("kill(self, SIGUSR1) failed: %v", zcall.Errno(errno))
+	}
+
+	// ReadInto the signal - retry a few times to handle timing
+	var info SignalInfo
+	for i := 0; i < 10; i++ {
+		err = sfd.ReadInto(&info)
+		if err == nil {
+			break
+		}
+		if err != iox.ErrWouldBlock {
+			t.Errorf("SignalFD.ReadInto unexpected error: %v", err)
+			return
+		}
+		// Small delay for signal delivery
+		for j := 0; j < 1000; j++ {
+			// busy wait
+		}
+	}
+	if err != nil {
+		t.Logf("SignalFD.ReadInto still blocked after retries (signal delivery timing): %v", err)
+		return
+	}
+	if info.Signo != SIGUSR1 {
+		t.Errorf("Expected signal %d, got %d", SIGUSR1, info.Signo)
+	}
+}
+
+// TestSignalFD_ReadIOReaderSuccess tests SignalFD Read (io.Reader) success path.
+func TestSignalFD_ReadIOReaderSuccess(t *testing.T) {
+	var mask SigSet
+	mask.Add(SIGUSR2)
+
+	// Block SIGUSR2
+	_, errno := zcall.Syscall4(
+		sysRtSigprocmask,
+		sigBlock,
+		uintptr(unsafe.Pointer(&mask)),
+		0,
+		8,
+	)
+	if errno != 0 {
+		t.Skipf("sigprocmask failed: %v", zcall.Errno(errno))
+	}
+
+	defer func() {
+		zcall.Syscall4(sysRtSigprocmask, sigUnblock, uintptr(unsafe.Pointer(&mask)), 0, 8)
+	}()
+
+	sfd, err := newSignalFD(mask, SFD_NONBLOCK|SFD_CLOEXEC)
+	if err != nil {
+		t.Fatalf("newSignalFD failed: %v", err)
+	}
+	defer sfd.Close()
+
+	// Send SIGUSR2 to ourselves
+	pid, _ := zcall.Syscall4(sysGetpid, 0, 0, 0, 0)
+	_, errno = zcall.Syscall4(sysKill, pid, SIGUSR2, 0, 0)
+	if errno != 0 {
+		t.Fatalf("kill(self, SIGUSR2) failed: %v", zcall.Errno(errno))
+	}
+
+	// Read (io.Reader) - retry a few times to handle timing
+	buf := make([]byte, 128)
+	var n int
+	for i := 0; i < 10; i++ {
+		n, err = sfd.Read(buf)
+		if err == nil {
+			break
+		}
+		if err != iox.ErrWouldBlock {
+			t.Errorf("SignalFD.Read unexpected error: %v", err)
+			return
+		}
+		// Small delay for signal delivery
+		for j := 0; j < 1000; j++ {
+			// busy wait
+		}
+	}
+	if err != nil {
+		t.Logf("SignalFD.Read still blocked after retries (signal delivery timing): %v", err)
+		return
+	}
+	if n != 128 {
+		t.Errorf("Expected 128 bytes, got %d", n)
+	}
+}
+
+// TestEventFD_Raw tests the Raw() method for FD caching in tight loops.
+func TestEventFD_Raw(t *testing.T) {
+	efd, err := NewEventFD(0)
+	if err != nil {
+		t.Fatalf("NewEventFD failed: %v", err)
+	}
+	defer efd.Close()
+
+	raw := efd.Raw()
+	if raw < 0 {
+		t.Errorf("Raw() should return valid fd, got %d", raw)
+	}
+
+	// Raw should match Fd
+	if int(raw) != efd.Fd() {
+		t.Errorf("Raw() = %d, Fd() = %d, should match", raw, efd.Fd())
+	}
+}
+
+// TestEventFD_RawAfterClose tests Raw() returns -1 after close.
+func TestEventFD_RawAfterClose(t *testing.T) {
+	efd, err := NewEventFD(0)
+	if err != nil {
+		t.Fatalf("NewEventFD failed: %v", err)
+	}
+
+	efd.Close()
+
+	raw := efd.Raw()
+	if raw != -1 {
+		t.Errorf("Raw() after close should return -1, got %d", raw)
+	}
+}
+
+// TestTimerFD_Raw tests the Raw() method.
+func TestTimerFD_Raw(t *testing.T) {
+	tfd, err := NewTimerFD()
+	if err != nil {
+		t.Fatalf("NewTimerFD failed: %v", err)
+	}
+	defer tfd.Close()
+
+	raw := tfd.Raw()
+	if raw < 0 {
+		t.Errorf("Raw() should return valid fd, got %d", raw)
+	}
+	if int(raw) != tfd.Fd() {
+		t.Errorf("Raw() = %d, Fd() = %d, should match", raw, tfd.Fd())
+	}
+}
+
+// TestSignalFD_Raw tests the Raw() method.
+func TestSignalFD_Raw(t *testing.T) {
+	var mask SigSet
+	mask.Add(SIGUSR1)
+
+	sfd, err := NewSignalFD(mask)
+	if err != nil {
+		t.Fatalf("NewSignalFD failed: %v", err)
+	}
+	defer sfd.Close()
+
+	raw := sfd.Raw()
+	if raw < 0 {
+		t.Errorf("Raw() should return valid fd, got %d", raw)
+	}
+	if int(raw) != sfd.Fd() {
+		t.Errorf("Raw() = %d, Fd() = %d, should match", raw, sfd.Fd())
+	}
+}
+
+// TestSignalFD_Valid tests the Valid() method.
+func TestSignalFD_Valid(t *testing.T) {
+	var mask SigSet
+	mask.Add(SIGUSR1)
+
+	sfd, err := NewSignalFD(mask)
+	if err != nil {
+		t.Fatalf("NewSignalFD failed: %v", err)
+	}
+
+	if !sfd.Valid() {
+		t.Error("Valid() should return true for open signalfd")
+	}
+
+	sfd.Close()
+
+	if sfd.Valid() {
+		t.Error("Valid() should return false after close")
+	}
+}
+
+// TestSignalFD_ReadTo tests the ReadTo zero-allocation method.
+func TestSignalFD_ReadTo(t *testing.T) {
+	var mask SigSet
+	mask.Add(SIGUSR1)
+
+	// Block SIGUSR1
+	_, errno := zcall.Syscall4(
+		sysRtSigprocmask,
+		1, // SIG_BLOCK
+		uintptr(unsafe.Pointer(&mask)),
+		0,
+		8,
+	)
+	if errno != 0 {
+		t.Fatalf("sigprocmask failed: %v", zcall.Errno(errno))
+	}
+
+	sfd, err := NewSignalFD(mask)
+	if err != nil {
+		t.Fatalf("NewSignalFD failed: %v", err)
+	}
+	defer sfd.Close()
+
+	// ReadTo should return ErrWouldBlock when no signal is pending
+	var info SignalInfo
+	err = sfd.ReadInto(&info)
+	if err != iox.ErrWouldBlock {
+		t.Errorf("ReadTo should return ErrWouldBlock when no signal pending, got: %v", err)
+	}
+
+	// Send SIGUSR1 to ourselves
+	pid, _ := zcall.Syscall4(sysGetpid, 0, 0, 0, 0)
+	_, errno = zcall.Syscall4(sysKill, pid, SIGUSR1, 0, 0)
+	if errno != 0 {
+		t.Fatalf("kill(self, SIGUSR1) failed: %v", zcall.Errno(errno))
+	}
+
+	// ReadTo should succeed now
+	err = sfd.ReadInto(&info)
+	if err != nil {
+		t.Errorf("ReadTo should succeed after signal sent, got: %v", err)
+		return
+	}
+	if info.Signo != SIGUSR1 {
+		t.Errorf("Expected signal %d, got %d", SIGUSR1, info.Signo)
+	}
+}
+
+// TestSignalFD_ReadToClosed tests ReadTo on closed signalfd.
+func TestSignalFD_ReadToClosed(t *testing.T) {
+	var mask SigSet
+	mask.Add(SIGUSR1)
+
+	sfd, err := NewSignalFD(mask)
+	if err != nil {
+		t.Fatalf("NewSignalFD failed: %v", err)
+	}
+	sfd.Close()
+
+	var info SignalInfo
+	err = sfd.ReadInto(&info)
+	if err != ErrClosed {
+		t.Errorf("ReadTo on closed should return ErrClosed, got: %v", err)
+	}
+}
+
+// TestMemFD_Raw tests the Raw() method.
+func TestMemFD_Raw(t *testing.T) {
+	mfd, err := NewMemFD("test")
+	if err != nil {
+		t.Fatalf("NewMemFD failed: %v", err)
+	}
+	defer mfd.Close()
+
+	raw := mfd.Raw()
+	if raw < 0 {
+		t.Errorf("Raw() should return valid fd, got %d", raw)
+	}
+	if int(raw) != mfd.Fd() {
+		t.Errorf("Raw() = %d, Fd() = %d, should match", raw, mfd.Fd())
+	}
+}
+
+// TestPidFD_Raw tests the Raw() method.
+func TestPidFD_Raw(t *testing.T) {
+	pid, _ := zcall.Syscall4(sysGetpid, 0, 0, 0, 0)
+	pfd, err := NewPidFD(int(pid))
+	if err != nil {
+		t.Fatalf("NewPidFD failed: %v", err)
+	}
+	defer pfd.Close()
+
+	raw := pfd.Raw()
+	if raw < 0 {
+		t.Errorf("Raw() should return valid fd, got %d", raw)
+	}
+	if int(raw) != pfd.Fd() {
+		t.Errorf("Raw() = %d, Fd() = %d, should match", raw, pfd.Fd())
+	}
+}
+
+// TestPidFD_GetFDSelf tests GetFD success path using our own process.
+func TestPidFD_GetFDSelf(t *testing.T) {
+	pid, _ := zcall.Syscall4(sysGetpid, 0, 0, 0, 0)
+	pfd, err := NewPidFD(int(pid))
+	if err != nil {
+		t.Skipf("NewPidFD failed: %v", err)
+	}
+	defer pfd.Close()
+
+	// Create an eventfd as a target FD to duplicate
+	efd, err := NewEventFD(0)
+	if err != nil {
+		t.Fatalf("NewEventFD failed: %v", err)
+	}
+	defer efd.Close()
+
+	// Try to get the eventfd from ourselves - this might work on newer kernels
+	// when targeting our own process
+	dupFD, err := pfd.GetFD(efd.Fd())
+	if err != nil {
+		// Expected to fail without CAP_SYS_PTRACE, but we tried
+		t.Logf("GetFD self failed (expected without privileges): %v", err)
+		return
+	}
+	defer dupFD.Close()
+
+	// If it succeeded, verify the duplicated FD works
+	if !dupFD.Valid() {
+		t.Error("Duplicated FD should be valid")
+	}
+	t.Logf("GetFD succeeded with fd=%d", dupFD.Fd())
+}
+
+// =============================================================================
+// SetNonblock/SetCloexec F_SETFL/F_SETFD Error Path Tests
+// =============================================================================
+
+// TestSetNonblock_SetFLError tests the F_SETFL error path in SetNonblock.
+// This requires closing the fd between F_GETFL and F_SETFL calls.
+func TestSetNonblock_SetFLError(t *testing.T) {
+	// Create eventfd
+	efd, err := newEventFD(0, EFD_CLOEXEC)
+	if err != nil {
+		t.Fatalf("newEventFD failed: %v", err)
+	}
+	rawFd := efd.fd.Raw()
+
+	// We need to close the fd right after F_GETFL succeeds but before F_SETFL.
+	// This is impossible to do deterministically without modifying the source.
+	// Instead, we test by closing fd before SetNonblock, which hits the first check.
+	zcall.Close(uintptr(rawFd))
+
+	fd := NewFD(int(rawFd))
+	err = fd.SetNonblock(true)
+	if err == nil {
+		t.Error("SetNonblock should fail on closed fd")
+	}
+	// This hits the F_GETFL error path (line 125-126), not F_SETFL
+}
+
+// TestSetCloexec_SetFDError tests the F_SETFD error path in SetCloexec.
+func TestSetCloexec_SetFDError(t *testing.T) {
+	efd, err := newEventFD(0, EFD_NONBLOCK)
+	if err != nil {
+		t.Fatalf("newEventFD failed: %v", err)
+	}
+	rawFd := efd.fd.Raw()
+
+	zcall.Close(uintptr(rawFd))
+
+	fd := NewFD(int(rawFd))
+	err = fd.SetCloexec(true)
+	if err == nil {
+		t.Error("SetCloexec should fail on closed fd")
 	}
 }

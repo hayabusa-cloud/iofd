@@ -247,7 +247,7 @@ func TestTimerFD_ArmAndRead(t *testing.T) {
 	time.Sleep(15 * time.Millisecond)
 
 	// Read should return 1 expiration
-	count, err := tfd.Read()
+	count, err := tfd.Expirations()
 	if err != nil {
 		t.Fatalf("Read failed: %v", err)
 	}
@@ -274,7 +274,7 @@ func TestTimerFD_PeriodicTimer(t *testing.T) {
 	time.Sleep(22 * time.Millisecond)
 
 	// Should have at least 3-4 expirations
-	count, err := tfd.Read()
+	count, err := tfd.Expirations()
 	if err != nil {
 		t.Fatalf("Read failed: %v", err)
 	}
@@ -306,7 +306,7 @@ func TestTimerFD_Disarm(t *testing.T) {
 	time.Sleep(150 * time.Millisecond)
 
 	// Read should return ErrWouldBlock (no expirations)
-	_, err = tfd.Read()
+	_, err = tfd.Expirations()
 	if err != iox.ErrWouldBlock {
 		t.Errorf("Expected ErrWouldBlock after disarm, got %v", err)
 	}
@@ -320,7 +320,7 @@ func TestTimerFD_WouldBlock(t *testing.T) {
 	defer tfd.Close()
 
 	// Read on unarmed timer should return ErrWouldBlock
-	_, err = tfd.Read()
+	_, err = tfd.Expirations()
 	if err != iox.ErrWouldBlock {
 		t.Errorf("Expected ErrWouldBlock on unarmed timer, got %v", err)
 	}
@@ -594,7 +594,7 @@ func TestTimerFD_ArmDuration(t *testing.T) {
 	// Wait for expiration
 	time.Sleep(15 * time.Millisecond)
 
-	count, err := tfd.Read()
+	count, err := tfd.Expirations()
 	if err != nil {
 		t.Fatalf("Read failed: %v", err)
 	}
@@ -619,7 +619,7 @@ func TestTimerFD_ArmDurationPeriodic(t *testing.T) {
 	// Wait for multiple expirations
 	time.Sleep(22 * time.Millisecond)
 
-	count, err := tfd.Read()
+	count, err := tfd.Expirations()
 	if err != nil {
 		t.Fatalf("Read failed: %v", err)
 	}
@@ -676,7 +676,7 @@ func TestTimerFD_ReadInto(t *testing.T) {
 
 	// ReadInto with buffer
 	buf := make([]byte, 8)
-	n, err := tfd.ReadInto(buf)
+	n, err := tfd.Read(buf)
 	if err != nil {
 		t.Fatalf("ReadInto failed: %v", err)
 	}
@@ -835,8 +835,9 @@ func TestSignalFD_WouldBlock(t *testing.T) {
 	}
 	defer sfd.Close()
 
-	// Read on signalfd with no pending signals should return ErrWouldBlock
-	_, err = sfd.Read()
+	// ReadInto on signalfd with no pending signals should return ErrWouldBlock
+	var info iofd.SignalInfo
+	err = sfd.ReadInto(&info)
 	if err != iox.ErrWouldBlock {
 		t.Errorf("Expected ErrWouldBlock on empty signalfd, got %v", err)
 	}
@@ -882,9 +883,10 @@ func TestSignalFD_Close(t *testing.T) {
 	}
 
 	// Operations on closed fd should fail
-	_, err = sfd.Read()
+	var info iofd.SignalInfo
+	err = sfd.ReadInto(&info)
 	if err == nil {
-		t.Error("Read on closed signalfd should fail")
+		t.Error("ReadInto on closed signalfd should fail")
 	}
 }
 
@@ -1044,6 +1046,143 @@ func TestMemFD_ReadWrite(t *testing.T) {
 	}
 	if size != 1024 {
 		t.Errorf("Size mismatch: expected 1024, got %d", size)
+	}
+}
+
+func TestMemFD_PreadPwrite(t *testing.T) {
+	mfd, err := iofd.NewMemFD("test-pread-pwrite")
+	if err != nil {
+		t.Fatalf("NewMemFD failed: %v", err)
+	}
+	defer mfd.Close()
+
+	// Set up file with some content
+	if err := mfd.Truncate(100); err != nil {
+		t.Fatalf("Truncate failed: %v", err)
+	}
+
+	// Pwrite at offset 10
+	data := []byte("hello")
+	n, err := mfd.Pwrite(data, 10)
+	if err != nil {
+		t.Fatalf("Pwrite failed: %v", err)
+	}
+	if n != len(data) {
+		t.Errorf("Pwrite wrote %d bytes, expected %d", n, len(data))
+	}
+
+	// Pwrite at offset 50
+	data2 := []byte("world")
+	n, err = mfd.Pwrite(data2, 50)
+	if err != nil {
+		t.Fatalf("Pwrite failed: %v", err)
+	}
+	if n != len(data2) {
+		t.Errorf("Pwrite wrote %d bytes, expected %d", n, len(data2))
+	}
+
+	// Pread from offset 10
+	buf := make([]byte, 5)
+	n, err = mfd.Pread(buf, 10)
+	if err != nil {
+		t.Fatalf("Pread failed: %v", err)
+	}
+	if n != 5 {
+		t.Errorf("Pread read %d bytes, expected 5", n)
+	}
+	if string(buf) != "hello" {
+		t.Errorf("Pread got %q, expected %q", string(buf), "hello")
+	}
+
+	// Pread from offset 50
+	n, err = mfd.Pread(buf, 50)
+	if err != nil {
+		t.Fatalf("Pread failed: %v", err)
+	}
+	if n != 5 {
+		t.Errorf("Pread read %d bytes, expected 5", n)
+	}
+	if string(buf) != "world" {
+		t.Errorf("Pread got %q, expected %q", string(buf), "world")
+	}
+
+	// Test empty buffer (no-op)
+	n, err = mfd.Pread(nil, 0)
+	if err != nil {
+		t.Errorf("Pread(nil) failed: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("Pread(nil) returned %d, expected 0", n)
+	}
+
+	n, err = mfd.Pwrite(nil, 0)
+	if err != nil {
+		t.Errorf("Pwrite(nil) failed: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("Pwrite(nil) returned %d, expected 0", n)
+	}
+}
+
+func TestMemFD_PreadPwriteOnClosed(t *testing.T) {
+	mfd, err := iofd.NewMemFD("test-pread-closed")
+	if err != nil {
+		t.Fatalf("NewMemFD failed: %v", err)
+	}
+	mfd.Close()
+
+	buf := make([]byte, 10)
+	_, err = mfd.Pread(buf, 0)
+	if err != iofd.ErrClosed {
+		t.Errorf("Expected ErrClosed, got %v", err)
+	}
+
+	_, err = mfd.Pwrite(buf, 0)
+	if err != iofd.ErrClosed {
+		t.Errorf("Expected ErrClosed, got %v", err)
+	}
+}
+
+func TestMemFD_PwriteSealed(t *testing.T) {
+	// Create a memfd with sealing enabled
+	mfd, err := iofd.NewMemFDSealed("test-pwrite-sealed")
+	if err != nil {
+		t.Fatalf("NewMemFDSealed failed: %v", err)
+	}
+	defer mfd.Close()
+
+	// Set size and seal writes
+	if err := mfd.Truncate(100); err != nil {
+		t.Fatalf("Truncate failed: %v", err)
+	}
+	if err := mfd.Seal(iofd.F_SEAL_WRITE); err != nil {
+		t.Fatalf("Seal failed: %v", err)
+	}
+
+	// Pwrite should fail with permission error
+	buf := []byte("test")
+	_, err = mfd.Pwrite(buf, 0)
+	if err == nil {
+		t.Error("Expected error writing to sealed memfd, got nil")
+	}
+}
+
+func TestMemFD_PreadNegativeOffset(t *testing.T) {
+	mfd, err := iofd.NewMemFD("test-pread-negative")
+	if err != nil {
+		t.Fatalf("NewMemFD failed: %v", err)
+	}
+	defer mfd.Close()
+
+	if err := mfd.Truncate(100); err != nil {
+		t.Fatalf("Truncate failed: %v", err)
+	}
+
+	// Negative offset should fail
+	buf := make([]byte, 10)
+	_, err = mfd.Pread(buf, -1)
+	if err == nil {
+		t.Error("Expected error with negative offset, got nil")
 	}
 }
 
@@ -1349,7 +1488,7 @@ func TestTimerFD_RearmTimer(t *testing.T) {
 
 	// Wait and read
 	time.Sleep(15 * time.Millisecond)
-	count, err := tfd.Read()
+	count, err := tfd.Expirations()
 	if err != nil {
 		t.Fatalf("Read failed: %v", err)
 	}
@@ -1367,13 +1506,13 @@ func TestTimerFD_ReadIntoSmallBuffer(t *testing.T) {
 
 	// ReadInto with too small buffer should fail
 	buf := make([]byte, 4)
-	_, err = tfd.ReadInto(buf)
+	_, err = tfd.Read(buf)
 	if err == nil {
 		t.Error("ReadInto with small buffer should fail")
 	}
 }
 
-func TestSignalFD_ReadIntoSmallBuffer(t *testing.T) {
+func TestSignalFD_ReadSmallBuffer(t *testing.T) {
 	var mask iofd.SigSet
 	mask.Add(iofd.SIGUSR1)
 
@@ -1383,11 +1522,11 @@ func TestSignalFD_ReadIntoSmallBuffer(t *testing.T) {
 	}
 	defer sfd.Close()
 
-	// ReadInto with too small buffer should fail
+	// Read (io.Reader) with too small buffer should fail
 	buf := make([]byte, 64)
-	_, err = sfd.ReadInto(buf)
+	_, err = sfd.Read(buf)
 	if err == nil {
-		t.Error("ReadInto with small buffer should fail")
+		t.Error("Read with small buffer should fail")
 	}
 }
 
@@ -1708,20 +1847,6 @@ func BenchmarkPidFD_SendSignal(b *testing.B) {
 // Additional Tests for Coverage
 // =============================================================================
 
-func TestEventFD_Value(t *testing.T) {
-	efd, err := iofd.NewEventFD(42)
-	if err != nil {
-		t.Fatalf("NewEventFD failed: %v", err)
-	}
-	defer efd.Close()
-
-	// Value is a stub that always returns ErrInvalidParam
-	_, err = efd.Value()
-	if err != iofd.ErrInvalidParam {
-		t.Errorf("Expected ErrInvalidParam, got %v", err)
-	}
-}
-
 func TestNewPidFDBlocking(t *testing.T) {
 	// Create a blocking pidfd for init process
 	pfd, err := iofd.NewPidFDBlocking(1)
@@ -1806,7 +1931,7 @@ func TestTimerFD_ArmAt(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	// Read should return the expiration count
-	count, err := tfd.Read()
+	count, err := tfd.Expirations()
 	if err != nil {
 		t.Fatalf("Read failed: %v", err)
 	}
@@ -1858,16 +1983,16 @@ func TestSignalFD_ReadInto(t *testing.T) {
 	}
 	defer sfd.Close()
 
-	// ReadInto with small buffer should fail
+	// Read (io.Reader) with small buffer should fail
 	smallBuf := make([]byte, 4)
-	_, err = sfd.ReadInto(smallBuf)
+	_, err = sfd.Read(smallBuf)
 	if err != iofd.ErrInvalidParam {
 		t.Errorf("Expected ErrInvalidParam for small buffer, got %v", err)
 	}
 
-	// ReadInto with sufficient buffer (no signal pending) should return WouldBlock
+	// Read (io.Reader) with sufficient buffer (no signal pending) should return WouldBlock
 	buf := make([]byte, 128)
-	_, err = sfd.ReadInto(buf)
+	_, err = sfd.Read(buf)
 	if err != iox.ErrWouldBlock {
 		t.Errorf("Expected ErrWouldBlock, got %v", err)
 	}
@@ -1976,7 +2101,7 @@ func TestTimerFD_ReadOnClosed(t *testing.T) {
 	}
 	tfd.Close()
 
-	_, err = tfd.Read()
+	_, err = tfd.Expirations()
 	if err != iofd.ErrClosed {
 		t.Errorf("Expected ErrClosed, got %v", err)
 	}
@@ -1990,7 +2115,7 @@ func TestTimerFD_ReadIntoOnClosed(t *testing.T) {
 	tfd.Close()
 
 	buf := make([]byte, 8)
-	_, err = tfd.ReadInto(buf)
+	_, err = tfd.Read(buf)
 	if err != iofd.ErrClosed {
 		t.Errorf("Expected ErrClosed, got %v", err)
 	}
@@ -2087,22 +2212,6 @@ func TestPidFD_GetFDOnClosed(t *testing.T) {
 	}
 }
 
-func TestSignalFD_ReadOnClosed(t *testing.T) {
-	var mask iofd.SigSet
-	mask.Add(iofd.SIGUSR1)
-
-	sfd, err := iofd.NewSignalFD(mask)
-	if err != nil {
-		t.Fatalf("NewSignalFD failed: %v", err)
-	}
-	sfd.Close()
-
-	_, err = sfd.Read()
-	if err != iofd.ErrClosed {
-		t.Errorf("Expected ErrClosed, got %v", err)
-	}
-}
-
 func TestSignalFD_ReadIntoOnClosed(t *testing.T) {
 	var mask iofd.SigSet
 	mask.Add(iofd.SIGUSR1)
@@ -2113,8 +2222,25 @@ func TestSignalFD_ReadIntoOnClosed(t *testing.T) {
 	}
 	sfd.Close()
 
+	var info iofd.SignalInfo
+	err = sfd.ReadInto(&info)
+	if err != iofd.ErrClosed {
+		t.Errorf("Expected ErrClosed, got %v", err)
+	}
+}
+
+func TestSignalFD_ReadIOReaderOnClosed(t *testing.T) {
+	var mask iofd.SigSet
+	mask.Add(iofd.SIGUSR1)
+
+	sfd, err := iofd.NewSignalFD(mask)
+	if err != nil {
+		t.Fatalf("NewSignalFD failed: %v", err)
+	}
+	sfd.Close()
+
 	buf := make([]byte, 128)
-	_, err = sfd.ReadInto(buf)
+	_, err = sfd.Read(buf)
 	if err != iofd.ErrClosed {
 		t.Errorf("Expected ErrClosed, got %v", err)
 	}
@@ -2281,5 +2407,81 @@ func TestSigSet_OutOfRange(t *testing.T) {
 	}
 	if s.Has(-1) {
 		t.Error("Has(-1) should return false")
+	}
+}
+
+// =============================================================================
+// EAGAIN Handling Tests for ReadInto methods
+// =============================================================================
+
+func TestEventFD_ReadWouldBlock(t *testing.T) {
+	efd, err := iofd.NewEventFD(0) // counter = 0
+	if err != nil {
+		t.Fatalf("NewEventFD failed: %v", err)
+	}
+	defer efd.Close()
+
+	// Read on empty counter should return ErrWouldBlock
+	buf := make([]byte, 8)
+	_, err = efd.Read(buf)
+	if err != iox.ErrWouldBlock {
+		t.Errorf("Expected ErrWouldBlock, got %v", err)
+	}
+}
+
+func TestTimerFD_ReadIntoWouldBlock(t *testing.T) {
+	tfd, err := iofd.NewTimerFD()
+	if err != nil {
+		t.Fatalf("NewTimerFD failed: %v", err)
+	}
+	defer tfd.Close()
+
+	// ReadInto on unarmed timer should return ErrWouldBlock
+	buf := make([]byte, 8)
+	_, err = tfd.Read(buf)
+	if err != iox.ErrWouldBlock {
+		t.Errorf("Expected ErrWouldBlock, got %v", err)
+	}
+}
+
+// =============================================================================
+// Valid() Method Coverage Tests
+// =============================================================================
+
+func TestEventFD_Valid(t *testing.T) {
+	efd, err := iofd.NewEventFD(0)
+	if err != nil {
+		t.Fatalf("NewEventFD failed: %v", err)
+	}
+
+	// Should be valid when open
+	if !efd.Valid() {
+		t.Error("EventFD should be valid when open")
+	}
+
+	efd.Close()
+
+	// Should be invalid after close
+	if efd.Valid() {
+		t.Error("EventFD should be invalid after close")
+	}
+}
+
+func TestTimerFD_Valid(t *testing.T) {
+	tfd, err := iofd.NewTimerFD()
+	if err != nil {
+		t.Fatalf("NewTimerFD failed: %v", err)
+	}
+
+	// Should be valid when open
+	if !tfd.Valid() {
+		t.Error("TimerFD should be valid when open")
+	}
+
+	tfd.Close()
+
+	// Should be invalid after close
+	if tfd.Valid() {
+		t.Error("TimerFD should be invalid after close")
 	}
 }

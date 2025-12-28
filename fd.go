@@ -33,17 +33,23 @@ func NewFD(fd int) FD {
 
 // Raw returns the underlying file descriptor as an int32.
 // Returns -1 if the FD is invalid or closed.
+//
+//go:nosplit
 func (fd *FD) Raw() int32 {
 	return atomic.LoadInt32((*int32)(fd))
 }
 
 // Fd returns the file descriptor as an int for interface compatibility.
 // Implements PollFd interface.
+//
+//go:nosplit
 func (fd *FD) Fd() int {
 	return int(fd.Raw())
 }
 
 // Valid reports whether the file descriptor is valid (non-negative).
+//
+//go:nosplit
 func (fd *FD) Valid() bool {
 	return fd.Raw() >= 0
 }
@@ -68,6 +74,14 @@ func (fd *FD) Close() error {
 
 // Read reads up to len(p) bytes from the file descriptor.
 // Returns iox.ErrWouldBlock if the fd is non-blocking and no data is available.
+//
+// On EOF (read returns 0 bytes with no error), this returns (0, nil) rather than
+// (0, io.EOF). This is intentional for low-level I/O:
+//   - For SOCK_STREAM: (0, nil) indicates peer closed the connection (EOF)
+//   - For SOCK_DGRAM/SOCK_SEQPACKET: (0, nil) indicates an empty message was
+//     received, which is NOT EOF - the peer may send more messages
+//
+// Higher-level stream abstractions should translate (0, nil) to io.EOF if needed.
 func (fd *FD) Read(p []byte) (int, error) {
 	if len(p) == 0 {
 		return 0, nil

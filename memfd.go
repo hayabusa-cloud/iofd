@@ -69,6 +69,8 @@ func newMemFD(name string, flags uintptr) (*MemFD, error) {
 
 // Fd returns the underlying file descriptor.
 // Implements PollFd interface.
+//
+//go:nosplit
 func (m *MemFD) Fd() int {
 	return m.fd.Fd()
 }
@@ -78,6 +80,14 @@ func (m *MemFD) Fd() int {
 // Implements PollCloser interface.
 func (m *MemFD) Close() error {
 	return m.fd.Close()
+}
+
+// Raw returns the raw file descriptor for use in tight loops.
+// The caller must ensure the MemFD remains valid while using the raw fd.
+//
+//go:nosplit
+func (m *MemFD) Raw() int32 {
+	return m.fd.Raw()
 }
 
 // Name returns the name given at creation.
@@ -93,6 +103,40 @@ func (m *MemFD) Read(p []byte) (int, error) {
 // Write writes to the memfd at the current file offset.
 func (m *MemFD) Write(p []byte) (int, error) {
 	return m.fd.Write(p)
+}
+
+// Pread reads from the memfd at the specified offset without changing the file position.
+func (m *MemFD) Pread(p []byte, offset int64) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+	raw := m.fd.Raw()
+	if raw < 0 {
+		return 0, ErrClosed
+	}
+	iov := zcall.Iovec{Base: &p[0], Len: uint64(len(p))}
+	n, errno := zcall.Preadv(uintptr(raw), unsafe.Pointer(&iov), 1, offset)
+	if errno != 0 {
+		return int(n), errFromErrno(errno)
+	}
+	return int(n), nil
+}
+
+// Pwrite writes to the memfd at the specified offset without changing the file position.
+func (m *MemFD) Pwrite(p []byte, offset int64) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+	raw := m.fd.Raw()
+	if raw < 0 {
+		return 0, ErrClosed
+	}
+	iov := zcall.Iovec{Base: &p[0], Len: uint64(len(p))}
+	n, errno := zcall.Pwritev(uintptr(raw), unsafe.Pointer(&iov), 1, offset)
+	if errno != 0 {
+		return int(n), errFromErrno(errno)
+	}
+	return int(n), nil
 }
 
 // Truncate sets the size of the memfd.
@@ -125,12 +169,18 @@ func (m *MemFD) Size() (int64, error) {
 }
 
 // statBuf is a minimal struct stat for extracting file size.
-// Layout matches Linux struct stat on amd64/arm64.
+// Layout matches Linux struct stat on 64-bit architectures (amd64, arm64, riscv64, loong64).
 type statBuf struct {
 	_    [48]byte // fields before st_size
 	size int64    // st_size at offset 48
 	_    [88]byte // remaining fields
 }
+
+// Compile-time size and offset checks for statBuf.
+// Linux struct stat is 144 bytes on 64-bit architectures.
+// st_size is at offset 48 on amd64, arm64, riscv64, loong64.
+var _ [144]byte = [unsafe.Sizeof(statBuf{})]byte{}
+var _ [48]byte = [unsafe.Offsetof(statBuf{}.size)]byte{}
 
 // Seal applies seals to prevent certain operations.
 // This is only available if the memfd was created with MFD_ALLOW_SEALING.
@@ -162,6 +212,8 @@ func (m *MemFD) Seals() (uint, error) {
 }
 
 // Valid reports whether the memfd is still valid.
+//
+//go:nosplit
 func (m *MemFD) Valid() bool {
 	return m.fd.Valid()
 }
