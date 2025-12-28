@@ -88,15 +88,12 @@ func (e *EventFD) Signal(val uint64) error {
 	if raw < 0 {
 		return ErrClosed
 	}
-	n, errno := zcall.Write(uintptr(raw), unsafe.Slice((*byte)(unsafe.Pointer(&val)), 8))
+	_, errno := zcall.Write(uintptr(raw), unsafe.Slice((*byte)(unsafe.Pointer(&val)), 8))
 	if errno != 0 {
 		if errno == uintptr(zcall.EAGAIN) {
 			return iox.ErrWouldBlock
 		}
 		return errFromErrno(errno)
-	}
-	if n != 8 {
-		return ErrInvalidParam
 	}
 	return nil
 }
@@ -112,15 +109,12 @@ func (e *EventFD) Wait() (uint64, error) {
 		return 0, ErrClosed
 	}
 	var val uint64
-	n, errno := zcall.Read(uintptr(raw), unsafe.Slice((*byte)(unsafe.Pointer(&val)), 8))
+	_, errno := zcall.Read(uintptr(raw), unsafe.Slice((*byte)(unsafe.Pointer(&val)), 8))
 	if errno != 0 {
 		if errno == uintptr(zcall.EAGAIN) {
 			return 0, iox.ErrWouldBlock
 		}
 		return 0, errFromErrno(errno)
-	}
-	if n != 8 {
-		return 0, ErrInvalidParam
 	}
 	return val, nil
 }

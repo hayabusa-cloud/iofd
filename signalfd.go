@@ -218,15 +218,12 @@ func (s *SignalFD) ReadInto(info *SignalInfo) error {
 		return ErrClosed
 	}
 	buf := (*[signalInfoSize]byte)(unsafe.Pointer(info))[:]
-	n, errno := zcall.Read(uintptr(raw), buf)
+	_, errno := zcall.Read(uintptr(raw), buf)
 	if errno != 0 {
 		if errno == uintptr(zcall.EAGAIN) {
 			return iox.ErrWouldBlock
 		}
 		return errFromErrno(errno)
-	}
-	if n != signalInfoSize {
-		return ErrInvalidParam
 	}
 	return nil
 }

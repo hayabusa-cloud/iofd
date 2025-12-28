@@ -166,15 +166,12 @@ func (t *TimerFD) Expirations() (uint64, error) {
 		return 0, ErrClosed
 	}
 	var buf [8]byte
-	n, errno := zcall.Read(uintptr(raw), buf[:])
+	_, errno := zcall.Read(uintptr(raw), buf[:])
 	if errno != 0 {
 		if errno == uintptr(zcall.EAGAIN) {
 			return 0, iox.ErrWouldBlock
 		}
 		return 0, errFromErrno(errno)
-	}
-	if n != 8 {
-		return 0, ErrInvalidParam
 	}
 	return binary.NativeEndian.Uint64(buf[:]), nil
 }
