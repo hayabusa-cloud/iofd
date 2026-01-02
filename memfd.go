@@ -211,6 +211,82 @@ func (m *MemFD) Seals() (uint, error) {
 	return uint(seals), nil
 }
 
+// MappedRegion represents a memory-mapped region of a MemFD.
+// The region must be unmapped with Unmap when no longer needed.
+type MappedRegion struct {
+	ptr    unsafe.Pointer
+	length uintptr
+}
+
+// Ptr returns the base pointer of the mapped region.
+//
+//go:nosplit
+func (r *MappedRegion) Ptr() unsafe.Pointer {
+	return r.ptr
+}
+
+// Len returns the length of the mapped region in bytes.
+// On 32-bit systems, regions larger than 2GB are not supported.
+//
+//go:nosplit
+func (r *MappedRegion) Len() int {
+	return int(r.length)
+}
+
+// Bytes returns the mapped region as a byte slice.
+// The returned slice is only valid while the region is mapped.
+//
+// Concurrency: The caller must synchronize access to the returned slice.
+// Concurrent reads are safe; concurrent writes require external locking.
+func (r *MappedRegion) Bytes() []byte {
+	return unsafe.Slice((*byte)(r.ptr), r.length)
+}
+
+// Unmap unmaps the memory region.
+// After this call, the region must not be accessed.
+func (r *MappedRegion) Unmap() error {
+	if r.ptr == nil {
+		return nil
+	}
+	errno := zcall.Munmap(r.ptr, r.length)
+	if errno != 0 {
+		return errFromErrno(errno)
+	}
+	r.ptr = nil
+	r.length = 0
+	return nil
+}
+
+// Mmap maps the memfd into memory for zero-copy access.
+// The mapping starts at offset 0 and spans the specified length.
+//
+// prot specifies the memory protection: PROT_READ, PROT_WRITE, or both.
+// The memfd must be sized appropriately before mapping (see Truncate).
+//
+// The returned MappedRegion must be unmapped with Unmap when done.
+// The MemFD can be closed after mapping; the region remains valid.
+func (m *MemFD) Mmap(length int, prot int) (*MappedRegion, error) {
+	return m.MmapAt(length, prot, 0)
+}
+
+// MmapAt maps the memfd into memory starting at the given offset.
+// offset must be page-aligned (typically 4096 bytes).
+func (m *MemFD) MmapAt(length int, prot int, offset int64) (*MappedRegion, error) {
+	raw := m.fd.Raw()
+	if raw < 0 {
+		return nil, ErrClosed
+	}
+	if length <= 0 {
+		return nil, ErrInvalidParam
+	}
+	ptr, errno := zcall.Mmap(nil, uintptr(length), uintptr(prot),
+		MAP_SHARED, uintptr(raw), uintptr(offset))
+	if errno != 0 {
+		return nil, errFromErrno(errno)
+	}
+	return &MappedRegion{ptr: ptr, length: uintptr(length)}, nil
+}
+
 // Valid reports whether the memfd is still valid.
 //
 //go:nosplit
@@ -240,6 +316,20 @@ const (
 const (
 	F_ADD_SEALS = 1033
 	F_GET_SEALS = 1034
+)
+
+// Memory protection flags for Mmap.
+const (
+	PROT_NONE  = 0x0
+	PROT_READ  = 0x1
+	PROT_WRITE = 0x2
+	PROT_EXEC  = 0x4
+)
+
+// Memory mapping flags.
+const (
+	MAP_SHARED  = 0x1
+	MAP_PRIVATE = 0x2
 )
 
 // Compile-time interface assertions

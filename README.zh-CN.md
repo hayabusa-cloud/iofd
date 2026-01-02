@@ -45,6 +45,7 @@ efd.Close()
 | `TimerFD` | 用于高精度定时器的 Linux timerfd |
 | `PidFD` | 用于无竞争进程管理的 Linux pidfd |
 | `MemFD` | 用于匿名内存文件的 Linux memfd |
+| `MappedRegion` | 用于零拷贝访问的内存映射区域 |
 | `SignalFD` | 用于同步信号处理的 Linux signalfd |
 
 ### 接口
@@ -76,6 +77,23 @@ fd.Write(buf)      // 写入字节
 fd.SetNonblock(true)   // 设置 O_NONBLOCK
 fd.SetCloexec(true)    // 设置 FD_CLOEXEC
 fd.Dup()               // 带 CLOEXEC 复制
+```
+
+### MemFD 内存映射
+
+```go
+// 创建 memfd 并设置大小
+mfd, _ := iofd.NewMemFD("buffer")
+mfd.Truncate(4096)
+
+// 映射以实现零拷贝访问
+region, _ := mfd.Mmap(4096, iofd.PROT_READ|iofd.PROT_WRITE)
+data := region.Bytes()  // 共享内存支持的 []byte
+copy(data, []byte("hello"))
+
+// 清理
+region.Unmap()
+mfd.Close()
 ```
 
 ## 平台支持

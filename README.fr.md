@@ -45,6 +45,7 @@ efd.Close()
 | `TimerFD` | timerfd Linux pour les minuteries haute résolution |
 | `PidFD` | pidfd Linux pour la gestion de processus sans condition de course |
 | `MemFD` | memfd Linux pour les fichiers anonymes en mémoire |
+| `MappedRegion` | Région mémoire mappée pour accès zéro-copie |
 | `SignalFD` | signalfd Linux pour le traitement synchrone des signaux |
 
 ### Interfaces
@@ -76,6 +77,23 @@ fd.Write(buf)      // Écrire des octets
 fd.SetNonblock(true)   // Définir O_NONBLOCK
 fd.SetCloexec(true)    // Définir FD_CLOEXEC
 fd.Dup()               // Dupliquer avec CLOEXEC
+```
+
+### Mappage Mémoire MemFD
+
+```go
+// Créer memfd et définir la taille
+mfd, _ := iofd.NewMemFD("buffer")
+mfd.Truncate(4096)
+
+// Mapper pour accès zéro-copie
+region, _ := mfd.Mmap(4096, iofd.PROT_READ|iofd.PROT_WRITE)
+data := region.Bytes()  // []byte soutenu par mémoire partagée
+copy(data, []byte("hello"))
+
+// Nettoyage
+region.Unmap()
+mfd.Close()
 ```
 
 ## Support des Plateformes
