@@ -226,6 +226,7 @@ func (r *MappedRegion) Ptr() unsafe.Pointer {
 }
 
 // Len returns the length of the mapped region in bytes.
+// On 32-bit systems, regions larger than 2GB are not supported.
 //
 //go:nosplit
 func (r *MappedRegion) Len() int {
@@ -234,6 +235,9 @@ func (r *MappedRegion) Len() int {
 
 // Bytes returns the mapped region as a byte slice.
 // The returned slice is only valid while the region is mapped.
+//
+// Concurrency: The caller must synchronize access to the returned slice.
+// Concurrent reads are safe; concurrent writes require external locking.
 func (r *MappedRegion) Bytes() []byte {
 	return unsafe.Slice((*byte)(r.ptr), r.length)
 }
