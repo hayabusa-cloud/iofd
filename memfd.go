@@ -246,7 +246,7 @@ func (r *MappedRegion) Unmap() error {
 	}
 	errno := zcall.Munmap(r.ptr, r.length)
 	if errno != 0 {
-		return errFromErrno(errno) // codecov:ignore
+		return errFromErrno(errno)
 	}
 	r.ptr = nil
 	r.length = 0

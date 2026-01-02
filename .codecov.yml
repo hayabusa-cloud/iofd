@@ -1,0 +1,11 @@
+coverage:
+  status:
+    project:
+      default:
+        target: 99%
+    patch:
+      default:
+        target: 95%
+
+ignore:
+  - "**/*_test.go"
