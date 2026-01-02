@@ -2186,6 +2186,160 @@ func TestMemFD_SealsOnClosed(t *testing.T) {
 	}
 }
 
+func TestMemFD_Mmap(t *testing.T) {
+	mfd, err := iofd.NewMemFD("test-mmap")
+	if err != nil {
+		t.Fatalf("NewMemFD failed: %v", err)
+	}
+	defer mfd.Close()
+
+	// Set size before mapping
+	size := 4096
+	if err := mfd.Truncate(int64(size)); err != nil {
+		t.Fatalf("Truncate failed: %v", err)
+	}
+
+	// Map the memfd
+	region, err := mfd.Mmap(size, iofd.PROT_READ|iofd.PROT_WRITE)
+	if err != nil {
+		t.Fatalf("Mmap failed: %v", err)
+	}
+	defer region.Unmap()
+
+	// Test MappedRegion methods
+	if region.Ptr() == nil {
+		t.Fatal("Ptr returned nil")
+	}
+	if region.Len() != size {
+		t.Fatalf("Len = %d, want %d", region.Len(), size)
+	}
+
+	// Write via Bytes slice
+	data := region.Bytes()
+	if len(data) != size {
+		t.Fatalf("Bytes len = %d, want %d", len(data), size)
+	}
+	copy(data, []byte("hello mmap"))
+
+	// Read back via memfd
+	buf := make([]byte, 10)
+	n, err := mfd.Pread(buf, 0)
+	if err != nil {
+		t.Fatalf("Pread failed: %v", err)
+	}
+	if string(buf[:n]) != "hello mmap" {
+		t.Fatalf("Read = %q, want %q", buf[:n], "hello mmap")
+	}
+}
+
+func TestMemFD_MmapAt(t *testing.T) {
+	mfd, err := iofd.NewMemFD("test-mmap-at")
+	if err != nil {
+		t.Fatalf("NewMemFD failed: %v", err)
+	}
+	defer mfd.Close()
+
+	// Set size for two pages
+	pageSize := 4096
+	if err := mfd.Truncate(int64(pageSize * 2)); err != nil {
+		t.Fatalf("Truncate failed: %v", err)
+	}
+
+	// Map second page only
+	region, err := mfd.MmapAt(pageSize, iofd.PROT_READ|iofd.PROT_WRITE, int64(pageSize))
+	if err != nil {
+		t.Fatalf("MmapAt failed: %v", err)
+	}
+	defer region.Unmap()
+
+	// Write to mapped region
+	data := region.Bytes()
+	copy(data, []byte("page2"))
+
+	// Read from second page via memfd
+	buf := make([]byte, 5)
+	n, err := mfd.Pread(buf, int64(pageSize))
+	if err != nil {
+		t.Fatalf("Pread failed: %v", err)
+	}
+	if string(buf[:n]) != "page2" {
+		t.Fatalf("Read = %q, want %q", buf[:n], "page2")
+	}
+}
+
+func TestMemFD_MmapOnClosed(t *testing.T) {
+	mfd, err := iofd.NewMemFD("test-mmap-closed")
+	if err != nil {
+		t.Fatalf("NewMemFD failed: %v", err)
+	}
+	mfd.Close()
+
+	_, err = mfd.Mmap(4096, iofd.PROT_READ)
+	if err != iofd.ErrClosed {
+		t.Errorf("Expected ErrClosed, got %v", err)
+	}
+}
+
+func TestMemFD_MmapInvalidLength(t *testing.T) {
+	mfd, err := iofd.NewMemFD("test-mmap-invalid")
+	if err != nil {
+		t.Fatalf("NewMemFD failed: %v", err)
+	}
+	defer mfd.Close()
+
+	_, err = mfd.Mmap(0, iofd.PROT_READ)
+	if err != iofd.ErrInvalidParam {
+		t.Errorf("Expected ErrInvalidParam, got %v", err)
+	}
+
+	_, err = mfd.Mmap(-1, iofd.PROT_READ)
+	if err != iofd.ErrInvalidParam {
+		t.Errorf("Expected ErrInvalidParam, got %v", err)
+	}
+}
+
+func TestMappedRegion_UnmapIdempotent(t *testing.T) {
+	mfd, err := iofd.NewMemFD("test-unmap")
+	if err != nil {
+		t.Fatalf("NewMemFD failed: %v", err)
+	}
+	defer mfd.Close()
+
+	if err := mfd.Truncate(4096); err != nil {
+		t.Fatalf("Truncate failed: %v", err)
+	}
+
+	region, err := mfd.Mmap(4096, iofd.PROT_READ)
+	if err != nil {
+		t.Fatalf("Mmap failed: %v", err)
+	}
+
+	// First unmap
+	if err := region.Unmap(); err != nil {
+		t.Fatalf("First Unmap failed: %v", err)
+	}
+
+	// Second unmap should be no-op
+	if err := region.Unmap(); err != nil {
+		t.Fatalf("Second Unmap failed: %v", err)
+	}
+}
+
+func TestMemFD_MmapSyscallError(t *testing.T) {
+	mfd, err := iofd.NewMemFD("test-mmap-error")
+	if err != nil {
+		t.Fatalf("NewMemFD failed: %v", err)
+	}
+	defer mfd.Close()
+
+	// Don't truncate - memfd size is 0
+	// Try to map with non-page-aligned offset to trigger EINVAL
+	_, err = mfd.MmapAt(4096, iofd.PROT_READ, 1) // offset 1 is not page-aligned
+	if err == nil {
+		t.Fatal("Expected error for non-page-aligned offset")
+	}
+}
+
 func TestPidFD_SendSignalOnClosed(t *testing.T) {
 	pfd, err := iofd.NewPidFD(1)
 	if err != nil {

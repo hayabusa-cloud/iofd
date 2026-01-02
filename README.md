@@ -45,6 +45,7 @@ efd.Close()
 | `TimerFD` | Linux timerfd for high-resolution timers |
 | `PidFD` | Linux pidfd for race-free process management |
 | `MemFD` | Linux memfd for anonymous memory-backed files |
+| `MappedRegion` | Memory-mapped region for zero-copy access |
 | `SignalFD` | Linux signalfd for synchronous signal handling |
 
 ### Interfaces
@@ -76,6 +77,23 @@ fd.Write(buf)      // Write bytes
 fd.SetNonblock(true)   // Set O_NONBLOCK
 fd.SetCloexec(true)    // Set FD_CLOEXEC
 fd.Dup()               // Duplicate with CLOEXEC
+```
+
+### MemFD Memory Mapping
+
+```go
+// Create memfd and set size
+mfd, _ := iofd.NewMemFD("buffer")
+mfd.Truncate(4096)
+
+// Map for zero-copy access
+region, _ := mfd.Mmap(4096, iofd.PROT_READ|iofd.PROT_WRITE)
+data := region.Bytes()  // []byte backed by shared memory
+copy(data, []byte("hello"))
+
+// Cleanup
+region.Unmap()
+mfd.Close()
 ```
 
 ## Platform Support

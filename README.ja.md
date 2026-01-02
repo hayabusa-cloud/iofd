@@ -45,6 +45,7 @@ efd.Close()
 | `TimerFD` | 高精度タイマー用Linux timerfd |
 | `PidFD` | 競合のないプロセス管理用Linux pidfd |
 | `MemFD` | 匿名メモリバックファイル用Linux memfd |
+| `MappedRegion` | ゼロコピーアクセス用メモリマップ領域 |
 | `SignalFD` | 同期シグナル処理用Linux signalfd |
 
 ### インターフェース
@@ -76,6 +77,23 @@ fd.Write(buf)      // バイト書き込み
 fd.SetNonblock(true)   // O_NONBLOCKを設定
 fd.SetCloexec(true)    // FD_CLOEXECを設定
 fd.Dup()               // CLOEXECで複製
+```
+
+### MemFDメモリマッピング
+
+```go
+// memfdを作成しサイズを設定
+mfd, _ := iofd.NewMemFD("buffer")
+mfd.Truncate(4096)
+
+// ゼロコピーアクセス用にマップ
+region, _ := mfd.Mmap(4096, iofd.PROT_READ|iofd.PROT_WRITE)
+data := region.Bytes()  // 共有メモリでバックされた[]byte
+copy(data, []byte("hello"))
+
+// クリーンアップ
+region.Unmap()
+mfd.Close()
 ```
 
 ## プラットフォームサポート
