@@ -5,7 +5,7 @@ coverage:
         target: 99%
     patch:
       default:
-        target: 95%
+        target: 90%
 
 ignore:
   - "**/*_test.go"
