@@ -177,6 +177,26 @@ func (t *TimerFD) Expirations() (uint64, error) {
 	return binary.NativeEndian.Uint64(buf[:]), nil
 }
 
+// ExpirationsInto reads expiration count into a caller-provided pointer.
+// Returns iox.ErrWouldBlock if no expirations have occurred (non-blocking mode).
+// This is the zero-allocation variant for use in hot paths.
+//
+// Postcondition: On success, *count contains the expiration count.
+func (t *TimerFD) ExpirationsInto(count *uint64) error {
+	raw := t.fd.Raw()
+	if raw < 0 {
+		return ErrClosed
+	}
+	_, errno := zcall.Read(uintptr(raw), unsafe.Slice((*byte)(unsafe.Pointer(count)), 8))
+	if errno != 0 {
+		if errno == uintptr(zcall.EAGAIN) {
+			return iox.ErrWouldBlock
+		}
+		return errFromErrno(errno)
+	}
+	return nil
+}
+
 // Read reads expiration count into the provided buffer.
 // Implements io.Reader interface.
 // p must be at least 8 bytes.
