@@ -21,6 +21,7 @@ import (
 //
 // EventFD is created with O_NONBLOCK and O_CLOEXEC by default.
 type EventFD struct {
+	_  noCopy
 	fd FD
 }
 
@@ -117,6 +118,26 @@ func (e *EventFD) Wait() (uint64, error) {
 		return 0, errFromErrno(errno)
 	}
 	return val, nil
+}
+
+// WaitInto reads the eventfd counter value into a caller-provided pointer.
+// Returns iox.ErrWouldBlock if the counter is zero (non-blocking mode).
+// This is the zero-allocation variant for use in hot paths.
+//
+// Postcondition: On success, *val contains the counter value.
+func (e *EventFD) WaitInto(val *uint64) error {
+	raw := e.fd.Raw()
+	if raw < 0 {
+		return ErrClosed
+	}
+	_, errno := zcall.Read(uintptr(raw), unsafe.Slice((*byte)(unsafe.Pointer(val)), 8))
+	if errno != 0 {
+		if errno == uintptr(zcall.EAGAIN) {
+			return iox.ErrWouldBlock
+		}
+		return errFromErrno(errno)
+	}
+	return nil
 }
 
 // Read reads the eventfd counter into p.

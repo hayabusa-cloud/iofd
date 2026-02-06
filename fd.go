@@ -13,6 +13,13 @@ import (
 	"code.hybscloud.com/zcall"
 )
 
+// noCopy may be added to structs which must not be copied after first use.
+// This is detected by go vet.
+type noCopy struct{}
+
+func (*noCopy) Lock()   {}
+func (*noCopy) Unlock() {}
+
 // FD represents a file descriptor as a universal handle.
 // It wraps an int32 and provides atomic operations for safe concurrent access.
 //
@@ -203,3 +210,10 @@ func errFromErrno(errno uintptr) error {
 		return e
 	}
 }
+
+// Compile-time interface assertions
+var (
+	_ PollFd     = (*FD)(nil)
+	_ PollCloser = (*FD)(nil)
+	_ Handle     = (*FD)(nil)
+)

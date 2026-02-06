@@ -20,6 +20,7 @@ import (
 //
 // TimerFD is created with TFD_NONBLOCK and TFD_CLOEXEC by default.
 type TimerFD struct {
+	_  noCopy
 	fd FD
 }
 
@@ -213,6 +214,13 @@ func (t *TimerFD) GetTime() (remaining, interval int64, err error) {
 	remaining = curr.value.sec*1e9 + curr.value.nsec
 	interval = curr.interval.sec*1e9 + curr.interval.nsec
 	return remaining, interval, nil
+}
+
+// GetTimeDuration is a convenience method that returns timer settings as time.Duration.
+// Symmetric to ArmDuration().
+func (t *TimerFD) GetTimeDuration() (remaining, interval time.Duration, err error) {
+	r, i, err := t.GetTime()
+	return time.Duration(r), time.Duration(i), err
 }
 
 // timespec matches struct timespec in Linux.
