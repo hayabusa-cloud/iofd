@@ -23,6 +23,7 @@ import (
 //   - The caller must block the signals with sigprocmask before using signalfd.
 //   - Each Read returns exactly one SignalInfo structure (128 bytes).
 type SignalFD struct {
+	_    noCopy
 	fd   FD
 	mask SigSet
 }
@@ -71,6 +72,7 @@ const (
 )
 
 // Add adds a signal to the set.
+// If sig is outside the valid range (1-64), the call is a no-op.
 func (s *SigSet) Add(sig int) {
 	if sig < 1 || sig > 64 {
 		return
@@ -79,6 +81,7 @@ func (s *SigSet) Add(sig int) {
 }
 
 // Del removes a signal from the set.
+// If sig is outside the valid range (1-64), the call is a no-op.
 func (s *SigSet) Del(sig int) {
 	if sig < 1 || sig > 64 {
 		return
@@ -87,6 +90,7 @@ func (s *SigSet) Del(sig int) {
 }
 
 // Has reports whether the signal is in the set.
+// Returns false if sig is outside the valid range (1-64).
 func (s SigSet) Has(sig int) bool {
 	if sig < 1 || sig > 64 {
 		return false
@@ -94,7 +98,7 @@ func (s SigSet) Has(sig int) bool {
 	return s&(1<<(sig-1)) != 0
 }
 
-// Empty reports whether the set is empty.
+// Empty reports whether the set contains no signals.
 func (s SigSet) Empty() bool {
 	return s == 0
 }

@@ -25,6 +25,7 @@ import (
 //   - Size starts at 0; use Truncate to set the desired size before use.
 //   - Content is zeroed on allocation.
 type MemFD struct {
+	_    noCopy
 	fd   FD
 	name string
 }
@@ -169,7 +170,10 @@ func (m *MemFD) Size() (int64, error) {
 }
 
 // statBuf is a minimal struct stat for extracting file size.
-// Layout matches Linux struct stat on 64-bit architectures (amd64, arm64, riscv64, loong64).
+// st_size is at offset 48 on all 64-bit architectures (amd64, arm64, riscv64, loong64).
+// Kernel struct stat is 144 bytes on x86_64, 128 bytes on arm64/riscv64/loong64 (asm-generic).
+// The Go struct is always 144 bytes; on arm64/riscv64/loong64 fstat writes 128 bytes
+// into the 144-byte buffer, leaving 16 trailing bytes as unused stack padding.
 type statBuf struct {
 	_    [48]byte // fields before st_size
 	size int64    // st_size at offset 48
@@ -177,8 +181,8 @@ type statBuf struct {
 }
 
 // Compile-time size and offset checks for statBuf.
-// Linux struct stat is 144 bytes on 64-bit architectures.
-// st_size is at offset 48 on amd64, arm64, riscv64, loong64.
+// Buffer is sized to the largest variant (x86_64, 144 bytes).
+// st_size is at offset 48 on all 64-bit architectures.
 var _ [144]byte = [unsafe.Sizeof(statBuf{})]byte{}
 var _ [48]byte = [unsafe.Offsetof(statBuf{}.size)]byte{}
 

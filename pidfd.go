@@ -20,6 +20,7 @@ import (
 //   - The pidfd refers to a specific process instance, not just a PID.
 //   - After the process exits, the pidfd remains valid for signal/wait operations.
 type PidFD struct {
+	_   noCopy
 	fd  FD
 	pid int
 }

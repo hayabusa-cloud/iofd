@@ -7,6 +7,8 @@
 package iofd_test
 
 import (
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -2637,5 +2639,390 @@ func TestTimerFD_Valid(t *testing.T) {
 	// Should be invalid after close
 	if tfd.Valid() {
 		t.Error("TimerFD should be invalid after close")
+	}
+}
+
+func TestMemFD_Valid(t *testing.T) {
+	mfd, err := iofd.NewMemFD("test-valid")
+	if err != nil {
+		t.Fatalf("NewMemFD failed: %v", err)
+	}
+
+	// Should be valid when open
+	if !mfd.Valid() {
+		t.Error("MemFD should be valid when open")
+	}
+
+	mfd.Close()
+
+	// Should be invalid after close
+	if mfd.Valid() {
+		t.Error("MemFD should be invalid after close")
+	}
+}
+
+// =============================================================================
+// New API Tests
+// =============================================================================
+
+func TestEventFD_WaitInto(t *testing.T) {
+	efd, err := iofd.NewEventFD(42)
+	if err != nil {
+		t.Fatalf("NewEventFD failed: %v", err)
+	}
+	defer efd.Close()
+
+	var val uint64
+	err = efd.WaitInto(&val)
+	if err != nil {
+		t.Fatalf("WaitInto failed: %v", err)
+	}
+	if val != 42 {
+		t.Errorf("Expected 42, got %d", val)
+	}
+}
+
+func TestEventFD_WaitIntoWouldBlock(t *testing.T) {
+	efd, err := iofd.NewEventFD(0)
+	if err != nil {
+		t.Fatalf("NewEventFD failed: %v", err)
+	}
+	defer efd.Close()
+
+	var val uint64
+	err = efd.WaitInto(&val)
+	if err != iox.ErrWouldBlock {
+		t.Errorf("Expected ErrWouldBlock, got %v", err)
+	}
+}
+
+func TestEventFD_WaitIntoClosed(t *testing.T) {
+	efd, err := iofd.NewEventFD(0)
+	if err != nil {
+		t.Fatalf("NewEventFD failed: %v", err)
+	}
+	efd.Close()
+
+	var val uint64
+	err = efd.WaitInto(&val)
+	if err != iofd.ErrClosed {
+		t.Errorf("Expected ErrClosed, got %v", err)
+	}
+}
+
+func TestTimerFD_GetTimeDuration(t *testing.T) {
+	tfd, err := iofd.NewTimerFD()
+	if err != nil {
+		t.Fatalf("NewTimerFD failed: %v", err)
+	}
+	defer tfd.Close()
+
+	// Arm timer
+	err = tfd.ArmDuration(100*time.Millisecond, 50*time.Millisecond)
+	if err != nil {
+		t.Fatalf("ArmDuration failed: %v", err)
+	}
+
+	// Get time using duration API
+	remaining, interval, err := tfd.GetTimeDuration()
+	if err != nil {
+		t.Fatalf("GetTimeDuration failed: %v", err)
+	}
+
+	// Remaining should be positive and less than initial
+	if remaining <= 0 || remaining > 100*time.Millisecond {
+		t.Errorf("Unexpected remaining time: %v", remaining)
+	}
+
+	// Interval should match what we set
+	if interval != 50*time.Millisecond {
+		t.Errorf("Expected interval %v, got %v", 50*time.Millisecond, interval)
+	}
+}
+
+func TestTimerFD_GetTimeDurationClosed(t *testing.T) {
+	tfd, err := iofd.NewTimerFD()
+	if err != nil {
+		t.Fatalf("NewTimerFD failed: %v", err)
+	}
+	tfd.Close()
+
+	_, _, err = tfd.GetTimeDuration()
+	if err != iofd.ErrClosed {
+		t.Errorf("Expected ErrClosed, got %v", err)
+	}
+}
+
+// =============================================================================
+// Edge Case Tests
+// =============================================================================
+
+func TestTimerFD_ZeroDuration(t *testing.T) {
+	tfd, err := iofd.NewTimerFD()
+	if err != nil {
+		t.Fatalf("NewTimerFD failed: %v", err)
+	}
+	defer tfd.Close()
+
+	// Arm with zero duration should disarm
+	err = tfd.ArmDuration(0, 0)
+	if err != nil {
+		t.Fatalf("ArmDuration(0, 0) failed: %v", err)
+	}
+
+	// Timer should be disarmed
+	remaining, interval, err := tfd.GetTimeDuration()
+	if err != nil {
+		t.Fatalf("GetTimeDuration failed: %v", err)
+	}
+	if remaining != 0 || interval != 0 {
+		t.Errorf("Expected (0, 0), got (%v, %v)", remaining, interval)
+	}
+}
+
+func TestMemFD_SealInteractions(t *testing.T) {
+	mfd, err := iofd.NewMemFDSealed("test-seal-interact")
+	if err != nil {
+		t.Fatalf("NewMemFDSealed failed: %v", err)
+	}
+	defer mfd.Close()
+
+	// Set size
+	if err := mfd.Truncate(4096); err != nil {
+		t.Fatalf("Truncate failed: %v", err)
+	}
+
+	// Seal against shrink
+	if err := mfd.Seal(iofd.F_SEAL_SHRINK); err != nil {
+		t.Fatalf("Seal failed: %v", err)
+	}
+
+	// Truncate to larger should work
+	if err := mfd.Truncate(8192); err != nil {
+		t.Errorf("Growing after F_SEAL_SHRINK should work: %v", err)
+	}
+
+	// Truncate to smaller should fail
+	err = mfd.Truncate(4096)
+	if err == nil {
+		t.Error("Shrinking after F_SEAL_SHRINK should fail")
+	}
+
+	// Map should still work
+	region, err := mfd.Mmap(4096, iofd.PROT_READ)
+	if err != nil {
+		t.Fatalf("Mmap failed: %v", err)
+	}
+	region.Unmap()
+}
+
+func TestEventFD_AlternatingSignalWait(t *testing.T) {
+	efd, err := iofd.NewEventFD(0)
+	if err != nil {
+		t.Fatalf("NewEventFD failed: %v", err)
+	}
+	defer efd.Close()
+
+	// Alternating signal and wait
+	for i := uint64(1); i <= 10; i++ {
+		err = efd.Signal(i)
+		if err != nil {
+			t.Fatalf("Signal(%d) failed: %v", i, err)
+		}
+
+		val, err := efd.Wait()
+		if err != nil {
+			t.Fatalf("Wait failed: %v", err)
+		}
+		if val != i {
+			t.Errorf("Expected %d, got %d", i, val)
+		}
+	}
+}
+
+// =============================================================================
+// Concurrency Tests
+// =============================================================================
+
+func TestEventFD_ConcurrentSignalWait(t *testing.T) {
+	efd, err := iofd.NewEventFD(0)
+	if err != nil {
+		t.Fatalf("NewEventFD failed: %v", err)
+	}
+	defer efd.Close()
+
+	const numOps = 1000
+	var wg sync.WaitGroup
+	var totalSignaled, totalWaited int64
+
+	// Signalers
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < numOps/10; j++ {
+				if err := efd.Signal(1); err == nil {
+					atomic.AddInt64(&totalSignaled, 1)
+				}
+			}
+		}()
+	}
+
+	// Waiters
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < numOps/10; j++ {
+				if val, err := efd.Wait(); err == nil {
+					atomic.AddInt64(&totalWaited, int64(val))
+				}
+			}
+		}()
+	}
+
+	wg.Wait()
+
+	// Drain any remaining
+	for {
+		val, err := efd.Wait()
+		if err == iox.ErrWouldBlock {
+			break
+		}
+		if err == nil {
+			totalWaited += int64(val)
+		}
+	}
+
+	if totalSignaled != totalWaited {
+		t.Errorf("Signaled %d, waited %d", totalSignaled, totalWaited)
+	}
+}
+
+func TestTimerFD_ConcurrentArmDisarm(t *testing.T) {
+	tfd, err := iofd.NewTimerFD()
+	if err != nil {
+		t.Fatalf("NewTimerFD failed: %v", err)
+	}
+	defer tfd.Close()
+
+	const numOps = 100
+	var wg sync.WaitGroup
+
+	// Concurrent armers
+	for i := 0; i < 5; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < numOps; j++ {
+				_ = tfd.ArmDuration(time.Hour, 0) // Long timer so it doesn't fire
+			}
+		}()
+	}
+
+	// Concurrent disarmers
+	for i := 0; i < 5; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < numOps; j++ {
+				_ = tfd.Disarm()
+			}
+		}()
+	}
+
+	wg.Wait()
+
+	// Timer should still be functional
+	if !tfd.Valid() {
+		t.Error("TimerFD should still be valid")
+	}
+}
+
+// =============================================================================
+// Additional Benchmarks
+// =============================================================================
+
+func BenchmarkEventFD_Wait(b *testing.B) {
+	efd, err := iofd.NewEventFD(0)
+	if err != nil {
+		b.Fatalf("NewEventFD failed: %v", err)
+	}
+	defer efd.Close()
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for i := 0; i < b.N; i++ {
+		_ = efd.Signal(1)
+		_, _ = efd.Wait()
+	}
+}
+
+func BenchmarkEventFD_WaitInto(b *testing.B) {
+	efd, err := iofd.NewEventFD(0)
+	if err != nil {
+		b.Fatalf("NewEventFD failed: %v", err)
+	}
+	defer efd.Close()
+
+	var val uint64
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for i := 0; i < b.N; i++ {
+		_ = efd.Signal(1)
+		_ = efd.WaitInto(&val)
+	}
+}
+
+func BenchmarkTimerFD_Arm(b *testing.B) {
+	tfd, err := iofd.NewTimerFD()
+	if err != nil {
+		b.Fatalf("NewTimerFD failed: %v", err)
+	}
+	defer tfd.Close()
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for i := 0; i < b.N; i++ {
+		_ = tfd.Arm(int64(time.Hour), 0)
+	}
+}
+
+func BenchmarkTimerFD_Expirations(b *testing.B) {
+	tfd, err := iofd.NewTimerFD()
+	if err != nil {
+		b.Fatalf("NewTimerFD failed: %v", err)
+	}
+	defer tfd.Close()
+
+	// Arm with very short timer
+	_ = tfd.Arm(1, 1) // 1ns initial, 1ns interval
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for i := 0; i < b.N; i++ {
+		_, _ = tfd.Expirations()
+	}
+}
+
+func BenchmarkTimerFD_GetTimeDuration(b *testing.B) {
+	tfd, err := iofd.NewTimerFD()
+	if err != nil {
+		b.Fatalf("NewTimerFD failed: %v", err)
+	}
+	defer tfd.Close()
+
+	_ = tfd.ArmDuration(time.Hour, time.Hour)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for i := 0; i < b.N; i++ {
+		_, _, _ = tfd.GetTimeDuration()
 	}
 }
