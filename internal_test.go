@@ -1551,6 +1551,30 @@ func TestEventFD_WaitIntoNonEAGAINError(t *testing.T) {
 	}
 }
 
+// TestSignalFD_ReadNonEAGAINError tests the non-EAGAIN error path in SignalFD.Read.
+// This covers the errFromErrno fallback at signalfd.go:209.
+func TestSignalFD_ReadNonEAGAINError(t *testing.T) {
+	var mask SigSet
+	mask.Add(SIGUSR1)
+	sfd, err := newSignalFD(mask, SFD_NONBLOCK|SFD_CLOEXEC)
+	if err != nil {
+		t.Fatalf("newSignalFD failed: %v", err)
+	}
+	rawFd := sfd.fd.Raw()
+
+	// Close the underlying fd directly to get EBADF (not EAGAIN)
+	zcall.Close(uintptr(rawFd))
+
+	buf := make([]byte, 128)
+	_, err = sfd.Read(buf)
+	if err == nil {
+		t.Error("Read should fail on closed fd")
+	}
+	if err == iox.ErrWouldBlock {
+		t.Error("Read should return non-EAGAIN error, got ErrWouldBlock")
+	}
+}
+
 // TestMappedRegion_UnmapError tests the munmap error path in Unmap.
 // This covers the errFromErrno fallback at memfd.go:257.
 func TestMappedRegion_UnmapError(t *testing.T) {
