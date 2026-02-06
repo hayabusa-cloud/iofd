@@ -27,11 +27,39 @@ go get code.hybscloud.com/iofd
 
 ## Quick Start
 
+### EventFD Signaling
+
 ```go
 efd, _ := iofd.NewEventFD(0)
+defer efd.Close()
+
 efd.Signal(1)
 val, _ := efd.Wait() // val == 1
-efd.Close()
+```
+
+### TimerFD
+
+```go
+tfd, _ := iofd.NewTimerFD()
+defer tfd.Close()
+
+// One-shot timer at 100ms
+tfd.ArmDuration(100*time.Millisecond, 0)
+// ... poll/epoll/io_uring wait ...
+count, _ := tfd.Expirations() // count == 1
+```
+
+### Error Handling
+
+```go
+_, err := efd.Wait()
+if err == iox.ErrWouldBlock {
+    // Non-blocking, no data available - retry later
+} else if err == iofd.ErrClosed {
+    // FD was closed
+} else if err != nil {
+    // Other error
+}
 ```
 
 ## API
@@ -96,6 +124,23 @@ region.Unmap()
 mfd.Close()
 ```
 
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                   Application Layer                      │
+├─────────────────────────────────────────────────────────┤
+│  EventFD │ TimerFD │ MemFD │ PidFD │ SignalFD │   FD   │
+├─────────────────────────────────────────────────────────┤
+│                        iofd                              │
+├─────────────────────────────────────────────────────────┤
+│                       zcall                              │
+│                (zero-overhead syscalls)                  │
+├─────────────────────────────────────────────────────────┤
+│                   Linux Kernel                           │
+└─────────────────────────────────────────────────────────┘
+```
+
 ## Platform Support
 
 | Platform | FD Core | EventFD | TimerFD | PidFD | MemFD | SignalFD |
@@ -106,6 +151,13 @@ mfd.Close()
 | FreeBSD/amd64 | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
 
 **Note**: Specialized handles (`EventFD`, `TimerFD`, etc.) are Linux-specific kernel primitives. On Darwin and FreeBSD, only the core `FD` type is available.
+
+## Safety Considerations
+
+- **Atomic Operations**: All FD access uses atomic load/store for concurrent safety
+- **Valid Check**: Use `Valid()` before operations on potentially closed descriptors
+- **Close Idempotency**: `Close()` can be called multiple times safely
+- **MappedRegion Lifetime**: `Bytes()` slice is only valid while the region is mapped
 
 ## License
 
