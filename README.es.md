@@ -96,6 +96,23 @@ region.Unmap()
 mfd.Close()
 ```
 
+## Arquitectura
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                   Capa de Aplicación                     │
+├─────────────────────────────────────────────────────────┤
+│  EventFD │ TimerFD │ MemFD │ PidFD │ SignalFD │   FD   │
+├─────────────────────────────────────────────────────────┤
+│                        iofd                              │
+├─────────────────────────────────────────────────────────┤
+│                       zcall                              │
+│              (syscalls de cero sobrecarga)               │
+├─────────────────────────────────────────────────────────┤
+│                    Kernel Linux                          │
+└─────────────────────────────────────────────────────────┘
+```
+
 ## Soporte de Plataformas
 
 | Plataforma | FD Núcleo | EventFD | TimerFD | PidFD | MemFD | SignalFD |
@@ -106,6 +123,13 @@ mfd.Close()
 | FreeBSD/amd64 | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
 
 **Nota**: Los handles especializados (`EventFD`, `TimerFD`, etc.) son primitivas del kernel específicas de Linux. En Darwin y FreeBSD, solo el tipo `FD` núcleo está disponible.
+
+## Consideraciones de Seguridad
+
+- **Operaciones Atómicas**: Todo acceso a FD usa carga/almacenamiento atómico para seguridad concurrente
+- **Verificación de Validez**: Use `Valid()` antes de operaciones en descriptores potencialmente cerrados
+- **Idempotencia de Close**: `Close()` puede llamarse múltiples veces de forma segura
+- **Vida Útil de MappedRegion**: El slice `Bytes()` solo es válido mientras la región esté mapeada
 
 ## Licencia
 
