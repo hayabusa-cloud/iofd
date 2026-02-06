@@ -1555,7 +1555,7 @@ func TestEventFD_WaitIntoNonEAGAINError(t *testing.T) {
 // This covers the errFromErrno fallback at signalfd.go:209.
 func TestSignalFD_ReadNonEAGAINError(t *testing.T) {
 	var mask SigSet
-	mask.Add(10) // SIGUSR1
+	mask.Add(SIGUSR1)
 	sfd, err := newSignalFD(mask, SFD_NONBLOCK|SFD_CLOEXEC)
 	if err != nil {
 		t.Fatalf("newSignalFD failed: %v", err)
