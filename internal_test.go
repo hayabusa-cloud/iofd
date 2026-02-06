@@ -1528,3 +1528,57 @@ func TestSetCloexec_RaceClose(t *testing.T) {
 		_ = fd.SetCloexec(true)
 	}
 }
+
+// TestEventFD_WaitIntoNonEAGAINError tests the non-EAGAIN error path in WaitInto.
+// This covers the errFromErrno fallback at eventfd.go:138.
+func TestEventFD_WaitIntoNonEAGAINError(t *testing.T) {
+	efd, err := newEventFD(0, EFD_NONBLOCK|EFD_CLOEXEC)
+	if err != nil {
+		t.Fatalf("newEventFD failed: %v", err)
+	}
+	rawFd := efd.fd.Raw()
+
+	// Close the underlying fd directly to get EBADF (not EAGAIN)
+	zcall.Close(uintptr(rawFd))
+
+	var val uint64
+	err = efd.WaitInto(&val)
+	if err == nil {
+		t.Error("WaitInto should fail on closed fd")
+	}
+	if err == iox.ErrWouldBlock {
+		t.Error("WaitInto should return non-EAGAIN error, got ErrWouldBlock")
+	}
+}
+
+// TestMappedRegion_UnmapError tests the munmap error path in Unmap.
+// This covers the errFromErrno fallback at memfd.go:257.
+func TestMappedRegion_UnmapError(t *testing.T) {
+	// Create a real mapping via memfd
+	mfd, err := newMemFD("test-unmap-error", MFD_CLOEXEC)
+	if err != nil {
+		t.Fatalf("newMemFD failed: %v", err)
+	}
+	defer mfd.Close()
+
+	if err := mfd.Truncate(4096); err != nil {
+		t.Fatalf("Truncate failed: %v", err)
+	}
+
+	region, err := mfd.Mmap(4096, PROT_READ)
+	if err != nil {
+		t.Fatalf("Mmap failed: %v", err)
+	}
+
+	// Corrupt the length to 0 — munmap(addr, 0) returns EINVAL.
+	region.length = 0
+
+	err = region.Unmap()
+	if err == nil {
+		t.Error("Unmap with zero length should fail with EINVAL")
+	}
+
+	// Restore and properly unmap to avoid leaking the mapping
+	region.length = 4096
+	region.Unmap()
+}
