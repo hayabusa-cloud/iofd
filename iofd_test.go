@@ -2710,6 +2710,61 @@ func TestEventFD_WaitIntoClosed(t *testing.T) {
 	}
 }
 
+func TestTimerFD_ExpirationsInto(t *testing.T) {
+	tfd, err := iofd.NewTimerFD()
+	if err != nil {
+		t.Fatalf("NewTimerFD failed: %v", err)
+	}
+	defer tfd.Close()
+
+	// Arm timer for 5ms one-shot
+	err = tfd.Arm(5*int64(time.Millisecond), 0)
+	if err != nil {
+		t.Fatalf("Arm failed: %v", err)
+	}
+
+	// Wait for timer to expire
+	time.Sleep(10 * time.Millisecond)
+
+	var count uint64
+	err = tfd.ExpirationsInto(&count)
+	if err != nil {
+		t.Fatalf("ExpirationsInto failed: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("Expected 1 expiration, got %d", count)
+	}
+}
+
+func TestTimerFD_ExpirationsIntoWouldBlock(t *testing.T) {
+	tfd, err := iofd.NewTimerFD()
+	if err != nil {
+		t.Fatalf("NewTimerFD failed: %v", err)
+	}
+	defer tfd.Close()
+
+	// Timer not armed, should return ErrWouldBlock
+	var count uint64
+	err = tfd.ExpirationsInto(&count)
+	if err != iox.ErrWouldBlock {
+		t.Errorf("Expected ErrWouldBlock, got %v", err)
+	}
+}
+
+func TestTimerFD_ExpirationsIntoClosed(t *testing.T) {
+	tfd, err := iofd.NewTimerFD()
+	if err != nil {
+		t.Fatalf("NewTimerFD failed: %v", err)
+	}
+	tfd.Close()
+
+	var count uint64
+	err = tfd.ExpirationsInto(&count)
+	if err != iofd.ErrClosed {
+		t.Errorf("Expected ErrClosed, got %v", err)
+	}
+}
+
 func TestTimerFD_GetTimeDuration(t *testing.T) {
 	tfd, err := iofd.NewTimerFD()
 	if err != nil {
@@ -3007,6 +3062,26 @@ func BenchmarkTimerFD_Expirations(b *testing.B) {
 
 	for i := 0; i < b.N; i++ {
 		_, _ = tfd.Expirations()
+	}
+}
+
+func BenchmarkTimerFD_ExpirationsInto(b *testing.B) {
+	tfd, err := iofd.NewTimerFD()
+	if err != nil {
+		b.Fatalf("NewTimerFD failed: %v", err)
+	}
+	defer tfd.Close()
+
+	// Arm with very short timer
+	_ = tfd.Arm(1, 1) // 1ns initial, 1ns interval
+
+	var count uint64
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for i := 0; i < b.N; i++ {
+		_ = tfd.ExpirationsInto(&count)
 	}
 }
 
