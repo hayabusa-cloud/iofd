@@ -1551,6 +1551,28 @@ func TestEventFD_WaitIntoNonEAGAINError(t *testing.T) {
 	}
 }
 
+// TestTimerFD_ExpirationsIntoNonEAGAINError tests the non-EAGAIN error path in ExpirationsInto.
+// This covers the errFromErrno fallback in timerfd.go.
+func TestTimerFD_ExpirationsIntoNonEAGAINError(t *testing.T) {
+	tfd, err := newTimerFD(CLOCK_MONOTONIC, TFD_NONBLOCK|TFD_CLOEXEC)
+	if err != nil {
+		t.Fatalf("newTimerFD failed: %v", err)
+	}
+	rawFd := tfd.fd.Raw()
+
+	// Close the underlying fd directly to get EBADF (not EAGAIN)
+	zcall.Close(uintptr(rawFd))
+
+	var count uint64
+	err = tfd.ExpirationsInto(&count)
+	if err == nil {
+		t.Error("ExpirationsInto should fail on closed fd")
+	}
+	if err == iox.ErrWouldBlock {
+		t.Error("ExpirationsInto should return non-EAGAIN error, got ErrWouldBlock")
+	}
+}
+
 // TestSignalFD_ReadNonEAGAINError tests the non-EAGAIN error path in SignalFD.Read.
 // This covers the errFromErrno fallback at signalfd.go:209.
 func TestSignalFD_ReadNonEAGAINError(t *testing.T) {
