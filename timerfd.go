@@ -7,7 +7,6 @@
 package iofd
 
 import (
-	"encoding/binary"
 	"time"
 	"unsafe"
 
@@ -166,15 +165,15 @@ func (t *TimerFD) Expirations() (uint64, error) {
 	if raw < 0 {
 		return 0, ErrClosed
 	}
-	var buf [8]byte
-	_, errno := zcall.Read(uintptr(raw), buf[:])
+	var val uint64
+	_, errno := zcall.Read(uintptr(raw), unsafe.Slice((*byte)(unsafe.Pointer(&val)), 8))
 	if errno != 0 {
 		if errno == uintptr(zcall.EAGAIN) {
 			return 0, iox.ErrWouldBlock
 		}
 		return 0, errFromErrno(errno)
 	}
-	return binary.NativeEndian.Uint64(buf[:]), nil
+	return val, nil
 }
 
 // ExpirationsInto reads expiration count into a caller-provided pointer.

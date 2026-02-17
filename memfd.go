@@ -59,7 +59,7 @@ func newMemFD(name string, flags uintptr) (*MemFD, error) {
 	nameBytes[len(name)] = 0
 
 	fd, errno := zcall.MemfdCreate(
-		unsafe.Pointer(&nameBytes[0]),
+		unsafe.Pointer(unsafe.SliceData(nameBytes)),
 		flags,
 	)
 	if errno != 0 {
@@ -115,7 +115,7 @@ func (m *MemFD) Pread(p []byte, offset int64) (int, error) {
 	if raw < 0 {
 		return 0, ErrClosed
 	}
-	iov := zcall.Iovec{Base: &p[0], Len: uint64(len(p))}
+	iov := zcall.Iovec{Base: unsafe.SliceData(p), Len: uint64(len(p))}
 	n, errno := zcall.Preadv(uintptr(raw), unsafe.Pointer(&iov), 1, offset)
 	if errno != 0 {
 		return int(n), errFromErrno(errno)
@@ -132,7 +132,7 @@ func (m *MemFD) Pwrite(p []byte, offset int64) (int, error) {
 	if raw < 0 {
 		return 0, ErrClosed
 	}
-	iov := zcall.Iovec{Base: &p[0], Len: uint64(len(p))}
+	iov := zcall.Iovec{Base: unsafe.SliceData(p), Len: uint64(len(p))}
 	n, errno := zcall.Pwritev(uintptr(raw), unsafe.Pointer(&iov), 1, offset)
 	if errno != 0 {
 		return int(n), errFromErrno(errno)
