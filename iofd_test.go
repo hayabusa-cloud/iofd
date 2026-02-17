@@ -105,7 +105,7 @@ func TestEventFD_Semaphore(t *testing.T) {
 	defer efd.Close()
 
 	// In semaphore mode, each read decrements by 1
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		val, err := efd.Wait()
 		if err != nil {
 			t.Fatalf("Wait %d failed: %v", i, err)
@@ -701,7 +701,7 @@ func BenchmarkEventFD_SignalWait(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = efd.Signal(1)
 		_, _ = efd.Wait()
 	}
@@ -717,7 +717,7 @@ func BenchmarkEventFD_Signal(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = efd.Signal(1)
 	}
 	// Drain
@@ -734,7 +734,7 @@ func BenchmarkTimerFD_ArmDisarm(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = tfd.Arm(int64(time.Second), 0)
 		_ = tfd.Disarm()
 	}
@@ -743,7 +743,7 @@ func BenchmarkTimerFD_ArmDisarm(b *testing.B) {
 func BenchmarkEventFD_Create(b *testing.B) {
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		efd, _ := iofd.NewEventFD(0)
 		_ = efd.Close()
 	}
@@ -752,7 +752,7 @@ func BenchmarkEventFD_Create(b *testing.B) {
 func BenchmarkTimerFD_Create(b *testing.B) {
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		tfd, _ := iofd.NewTimerFD()
 		_ = tfd.Close()
 	}
@@ -1314,7 +1314,7 @@ func BenchmarkSignalFD_Create(b *testing.B) {
 
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		sfd, _ := iofd.NewSignalFD(mask)
 		_ = sfd.Close()
 	}
@@ -1323,7 +1323,7 @@ func BenchmarkSignalFD_Create(b *testing.B) {
 func BenchmarkPidFD_Create(b *testing.B) {
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		pfd, _ := iofd.NewPidFD(1)
 		_ = pfd.Close()
 	}
@@ -1332,7 +1332,7 @@ func BenchmarkPidFD_Create(b *testing.B) {
 func BenchmarkMemFD_Create(b *testing.B) {
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		mfd, _ := iofd.NewMemFD("bench")
 		_ = mfd.Close()
 	}
@@ -1348,7 +1348,7 @@ func BenchmarkMemFD_Truncate(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = mfd.Truncate(4096)
 	}
 }
@@ -1689,7 +1689,7 @@ func BenchmarkFD_Raw(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = fd.Raw()
 	}
 }
@@ -1706,7 +1706,7 @@ func BenchmarkFD_Valid(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = fd.Valid()
 	}
 }
@@ -1725,7 +1725,7 @@ func BenchmarkEventFD_ReadWrite(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = efd.Write(wbuf)
 		_, _ = efd.Read(rbuf)
 	}
@@ -1743,7 +1743,7 @@ func BenchmarkTimerFD_GetTime(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _, _ = tfd.GetTime()
 	}
 }
@@ -1751,7 +1751,7 @@ func BenchmarkTimerFD_GetTime(b *testing.B) {
 func BenchmarkSigSet_Add(b *testing.B) {
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		var set iofd.SigSet
 		set.Add(iofd.SIGUSR1)
 		set.Add(iofd.SIGUSR2)
@@ -1767,7 +1767,7 @@ func BenchmarkSigSet_Has(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = set.Has(iofd.SIGUSR1)
 		_ = set.Has(iofd.SIGTERM)
 	}
@@ -1785,7 +1785,7 @@ func BenchmarkMemFD_Size(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = mfd.Size()
 	}
 }
@@ -1803,7 +1803,7 @@ func BenchmarkMemFD_ReadWrite(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = mfd.Write(buf)
 	}
 }
@@ -1824,7 +1824,7 @@ func BenchmarkSignalFD_SetMask(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = sfd.SetMask(newMask)
 	}
 }
@@ -1839,7 +1839,7 @@ func BenchmarkPidFD_SendSignal(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		// Signal 0 just checks process existence
 		_ = pfd.SendSignal(0)
 	}
@@ -2908,29 +2908,29 @@ func TestEventFD_ConcurrentSignalWait(t *testing.T) {
 
 	const numOps = 1000
 	var wg sync.WaitGroup
-	var totalSignaled, totalWaited int64
+	var totalSignaled, totalWaited atomic.Int64
 
 	// Signalers
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for j := 0; j < numOps/10; j++ {
+			for range numOps / 10 {
 				if err := efd.Signal(1); err == nil {
-					atomic.AddInt64(&totalSignaled, 1)
+					totalSignaled.Add(1)
 				}
 			}
 		}()
 	}
 
 	// Waiters
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for j := 0; j < numOps/10; j++ {
+			for range numOps / 10 {
 				if val, err := efd.Wait(); err == nil {
-					atomic.AddInt64(&totalWaited, int64(val))
+					totalWaited.Add(int64(val))
 				}
 			}
 		}()
@@ -2945,12 +2945,12 @@ func TestEventFD_ConcurrentSignalWait(t *testing.T) {
 			break
 		}
 		if err == nil {
-			totalWaited += int64(val)
+			totalWaited.Add(int64(val))
 		}
 	}
 
-	if totalSignaled != totalWaited {
-		t.Errorf("Signaled %d, waited %d", totalSignaled, totalWaited)
+	if totalSignaled.Load() != totalWaited.Load() {
+		t.Errorf("Signaled %d, waited %d", totalSignaled.Load(), totalWaited.Load())
 	}
 }
 
@@ -2965,22 +2965,22 @@ func TestTimerFD_ConcurrentArmDisarm(t *testing.T) {
 	var wg sync.WaitGroup
 
 	// Concurrent armers
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for j := 0; j < numOps; j++ {
+			for range numOps {
 				_ = tfd.ArmDuration(time.Hour, 0) // Long timer so it doesn't fire
 			}
 		}()
 	}
 
 	// Concurrent disarmers
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for j := 0; j < numOps; j++ {
+			for range numOps {
 				_ = tfd.Disarm()
 			}
 		}()
@@ -3008,7 +3008,7 @@ func BenchmarkEventFD_Wait(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = efd.Signal(1)
 		_, _ = efd.Wait()
 	}
@@ -3026,7 +3026,7 @@ func BenchmarkEventFD_WaitInto(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = efd.Signal(1)
 		_ = efd.WaitInto(&val)
 	}
@@ -3042,7 +3042,7 @@ func BenchmarkTimerFD_Arm(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = tfd.Arm(int64(time.Hour), 0)
 	}
 }
@@ -3060,7 +3060,7 @@ func BenchmarkTimerFD_Expirations(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = tfd.Expirations()
 	}
 }
@@ -3080,7 +3080,7 @@ func BenchmarkTimerFD_ExpirationsInto(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = tfd.ExpirationsInto(&count)
 	}
 }
@@ -3097,7 +3097,7 @@ func BenchmarkTimerFD_GetTimeDuration(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _, _ = tfd.GetTimeDuration()
 	}
 }
