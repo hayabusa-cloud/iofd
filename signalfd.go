@@ -221,7 +221,7 @@ func (s *SignalFD) ReadInto(info *SignalInfo) error {
 	if raw < 0 {
 		return ErrClosed
 	}
-	buf := (*[signalInfoSize]byte)(unsafe.Pointer(info))[:]
+	buf := unsafe.Slice((*byte)(unsafe.Pointer(info)), signalInfoSize)
 	_, errno := zcall.Read(uintptr(raw), buf)
 	if errno != 0 {
 		if errno == uintptr(zcall.EAGAIN) {

@@ -927,7 +927,7 @@ func TestConcurrentClose(t *testing.T) {
 
 	// Launch multiple goroutines to close concurrently
 	done := make(chan bool, 10)
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		go func() {
 			efd.Close()
 			done <- true
@@ -935,7 +935,7 @@ func TestConcurrentClose(t *testing.T) {
 	}
 
 	// Wait for all goroutines
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		<-done
 	}
 
@@ -956,7 +956,7 @@ func TestFD_ConcurrentReadWrite(t *testing.T) {
 	done := make(chan bool, 20)
 
 	// Writers
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		go func() {
 			efd.Signal(1)
 			done <- true
@@ -964,7 +964,7 @@ func TestFD_ConcurrentReadWrite(t *testing.T) {
 	}
 
 	// Readers
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		go func() {
 			efd.Wait()
 			done <- true
@@ -972,7 +972,7 @@ func TestFD_ConcurrentReadWrite(t *testing.T) {
 	}
 
 	// Wait for all goroutines
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		<-done
 	}
 }
@@ -1099,7 +1099,7 @@ func TestSignalFD_ReadSuccess(t *testing.T) {
 
 	// ReadInto the signal - retry a few times to handle timing
 	var info SignalInfo
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		err = sfd.ReadInto(&info)
 		if err == nil {
 			break
@@ -1109,7 +1109,7 @@ func TestSignalFD_ReadSuccess(t *testing.T) {
 			return
 		}
 		// Small delay for signal delivery
-		for j := 0; j < 1000; j++ {
+		for range 1000 {
 			// busy wait
 		}
 	}
@@ -1159,7 +1159,7 @@ func TestSignalFD_ReadIOReaderSuccess(t *testing.T) {
 	// Read (io.Reader) - retry a few times to handle timing
 	buf := make([]byte, 128)
 	var n int
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		n, err = sfd.Read(buf)
 		if err == nil {
 			break
@@ -1169,7 +1169,7 @@ func TestSignalFD_ReadIOReaderSuccess(t *testing.T) {
 			return
 		}
 		// Small delay for signal delivery
-		for j := 0; j < 1000; j++ {
+		for range 1000 {
 			// busy wait
 		}
 	}
@@ -1312,7 +1312,7 @@ func TestSignalFD_ReadTo(t *testing.T) {
 	}
 
 	// ReadTo should succeed now - retry for signal delivery timing
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		err = sfd.ReadInto(&info)
 		if err == nil {
 			break
@@ -1321,7 +1321,7 @@ func TestSignalFD_ReadTo(t *testing.T) {
 			t.Errorf("ReadTo unexpected error: %v", err)
 			return
 		}
-		for j := 0; j < 1000; j++ {
+		for range 1000 {
 			// busy wait
 		}
 	}
@@ -1492,7 +1492,7 @@ func TestEventFD_SignalOverflow(t *testing.T) {
 // This test tries to cover the F_SETFL error path by closing the fd
 // between F_GETFL and F_SETFL. Due to timing, coverage is not guaranteed.
 func TestSetNonblock_RaceClose(t *testing.T) {
-	for i := 0; i < 1000; i++ {
+	for range 1000 {
 		efd, err := newEventFD(0, EFD_CLOEXEC)
 		if err != nil {
 			t.Fatalf("newEventFD failed: %v", err)
@@ -1513,7 +1513,7 @@ func TestSetNonblock_RaceClose(t *testing.T) {
 
 // TestSetCloexec_RaceClose attempts to trigger F_SETFD error by racing close.
 func TestSetCloexec_RaceClose(t *testing.T) {
-	for i := 0; i < 1000; i++ {
+	for range 1000 {
 		efd, err := newEventFD(0, EFD_NONBLOCK)
 		if err != nil {
 			t.Fatalf("newEventFD failed: %v", err)
