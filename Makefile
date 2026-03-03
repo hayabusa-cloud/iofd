@@ -1,4 +1,6 @@
-.PHONY: test bench vet clean
+.PHONY: all test bench vet clean
+
+all: vet test
 
 test:
 	go test -race ./...
