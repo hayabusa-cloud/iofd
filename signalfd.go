@@ -233,6 +233,7 @@ func (s *SignalFD) ReadInto(info *SignalInfo) error {
 }
 
 // SetMask updates the signal mask monitored by this signalfd.
+// Concurrency: SetMask/Mask are unsynchronized; callers must serialize concurrent access.
 func (s *SignalFD) SetMask(mask SigSet) error {
 	raw := s.fd.Raw()
 	if raw < 0 {
@@ -252,6 +253,7 @@ func (s *SignalFD) SetMask(mask SigSet) error {
 }
 
 // Mask returns the current signal mask.
+// Concurrency: callers must synchronize with concurrent SetMask calls.
 func (s *SignalFD) Mask() SigSet {
 	return s.mask
 }
