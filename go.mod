@@ -4,5 +4,5 @@ go 1.26
 
 require (
 	code.hybscloud.com/iox v0.3.6
-	code.hybscloud.com/zcall v0.4.3
+	code.hybscloud.com/zcall v0.4.4
 )
