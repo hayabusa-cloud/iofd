@@ -14,7 +14,9 @@ package iofd
 // Any resource that can be monitored for I/O readiness implements this interface.
 type PollFd interface {
 	// Fd returns the underlying file descriptor as an integer.
-	// The returned value is valid only while the resource is open.
+	// The returned value is borrowed and valid only while the resource is open.
+	// It must not be closed independently.
+	// Callers must keep the resource open while using the returned value.
 	Fd() int
 }
 
@@ -22,6 +24,7 @@ type PollFd interface {
 type PollCloser interface {
 	PollFd
 	// Close releases the underlying file descriptor.
+	// Call Close only after in-flight users of the descriptor are drained.
 	// After Close returns, Fd() behavior is undefined.
 	Close() error
 }

@@ -18,6 +18,7 @@ import (
 // enabling signal handling via poll/epoll/io_uring.
 //
 // SignalFD is created with SFD_NONBLOCK and SFD_CLOEXEC by default.
+// Do not copy SignalFD after first use.
 //
 // Invariants:
 //   - The caller must block the signals with sigprocmask before using signalfd.
@@ -29,7 +30,8 @@ type SignalFD struct {
 }
 
 // SigSet represents a signal set for signalfd operations.
-// On Linux amd64, this is a 64-bit mask where bit N represents signal N+1.
+// On supported Linux 64-bit architectures, this is a 64-bit mask where bit N
+// represents signal N+1.
 //
 // Limitation: This implementation supports signals 1-64 only.
 // Real-time signals beyond SIGRTMIN+32 (signal 64) are not supported.
@@ -138,7 +140,7 @@ const signalInfoSize = 128
 var _ [signalInfoSize]byte = [unsafe.Sizeof(SignalInfo{})]byte{}
 
 // NewSignalFD creates a new signalfd monitoring the given signal set.
-// The signalfd is created with SFD_NONBLOCK | SFD_CLOEXEC flags.
+// The signalfd is created with SFD_NONBLOCK and SFD_CLOEXEC flags.
 //
 // The caller should block the signals in the set using sigprocmask
 // before creating the signalfd to prevent default signal handling.
@@ -147,7 +149,7 @@ func NewSignalFD(mask SigSet) (*SignalFD, error) {
 }
 
 func newSignalFD(mask SigSet, flags uintptr) (*SignalFD, error) {
-	// signalfd4 expects the sigset_t size, which is 8 bytes on amd64
+	// signalfd4 expects the sigset_t size used by this package's SigSet.
 	fd, errno := zcall.Signalfd4(
 		^uintptr(0), // -1: create new fd
 		unsafe.Pointer(&mask),
@@ -183,6 +185,7 @@ func (s *SignalFD) Valid() bool {
 
 // Raw returns the raw file descriptor for use in tight loops.
 // The caller must ensure the SignalFD remains valid while using the raw fd.
+// The returned descriptor number is borrowed and must not be closed directly.
 //
 //go:nosplit
 func (s *SignalFD) Raw() int32 {
@@ -213,7 +216,7 @@ func (s *SignalFD) Read(p []byte) (int, error) {
 
 // ReadInto reads signal information into a caller-provided SignalInfo.
 // Returns iox.ErrWouldBlock if no signal is pending.
-// This is the zero-allocation variant for use in hot paths.
+// This stores the result in caller-owned memory for hot paths.
 //
 // Postcondition: On success, info contains the next pending signal.
 func (s *SignalFD) ReadInto(info *SignalInfo) error {
@@ -234,6 +237,7 @@ func (s *SignalFD) ReadInto(info *SignalInfo) error {
 
 // SetMask updates the signal mask monitored by this signalfd.
 // Concurrency: SetMask/Mask are unsynchronized; callers must serialize concurrent access.
+// On the success path, SetMask does not allocate heap memory.
 func (s *SignalFD) SetMask(mask SigSet) error {
 	raw := s.fd.Raw()
 	if raw < 0 {

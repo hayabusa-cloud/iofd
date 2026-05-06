@@ -16,8 +16,10 @@ Language: **English** | [简体中文](./README.zh-CN.md) | [Español](./README.
 ### Key Features
 
 - **Zero Overhead**: All kernel interactions via `zcall` assembly, bypassing Go's syscall hooks
+- **Zero-Allocation Hot Paths**: Fixed-size `EventFD`, `TimerFD`, and `SignalFD` success paths keep syscall arguments stack-backed
 - **Specialized Handles**: Linux-specific `EventFD`, `TimerFD`, `PidFD`, `MemFD`, `SignalFD`
 - **Cross-Platform Core**: Base `FD` operations work on Linux, Darwin, and FreeBSD
+- **Explicit Ownership**: `FD` close idempotence applies to one descriptor cell; close after users are drained and use `Dup` for an independent close owner
 
 ## Installation
 
@@ -53,9 +55,9 @@ count, _ := tfd.Expirations() // count == 1
 
 ```go
 _, err := efd.Wait()
-if err == iox.ErrWouldBlock {
+if errors.Is(err, iox.ErrWouldBlock) {
     // Non-blocking, no data available - retry later
-} else if err == iofd.ErrClosed {
+} else if errors.Is(err, iofd.ErrClosed) {
     // FD was closed
 } else if err != nil {
     // Other error
@@ -68,7 +70,7 @@ if err == iox.ErrWouldBlock {
 
 | Type | Description |
 |------|-------------|
-| `FD` | Universal file descriptor with atomic operations |
+| `FD` | File descriptor cell with atomic same-cell lifecycle operations |
 | `EventFD` | Linux eventfd for inter-thread signaling |
 | `TimerFD` | Linux timerfd for high-resolution timers |
 | `PidFD` | Linux pidfd for race-free process management |
@@ -84,18 +86,21 @@ if err == iox.ErrWouldBlock {
 | `PollCloser` | `Fd()`, `Close()` | Closeable pollable descriptor |
 | `Handle` | `Fd()`, `Close()`, `Read()`, `Write()` | Full I/O handle |
 | `Signaler` | `Signal()`, `Wait()` | Signaling mechanism |
-| `Timer` | `Arm()`, `Disarm()`, `Read()` | Timer handle |
+| `Timer` | `Arm()`, `Disarm()` | Timer handle |
 
 ### FD Operations
 
 ```go
 // Create FD from raw descriptor
 fd := iofd.NewFD(rawFd)
+// NewFD takes close ownership. Do not close copied FD values;
+// close only after users are drained. Use fd.Dup() for an
+// independent descriptor owner.
 
 // Atomic operations
 fd.Raw()           // Get raw int32 value
 fd.Valid()         // Check if valid (non-negative)
-fd.Close()         // Idempotent close
+fd.Close()         // Same-cell close after drain
 
 // I/O operations
 fd.Read(buf)       // Read bytes
@@ -106,6 +111,17 @@ fd.SetNonblock(true)   // Set O_NONBLOCK
 fd.SetCloexec(true)    // Set FD_CLOEXEC
 fd.Dup()               // Duplicate with CLOEXEC
 ```
+
+### Constructor Flags
+
+| Constructor | Default flags |
+|-------------|---------------|
+| `NewEventFD`, `NewEventFDSemaphore` | `EFD_NONBLOCK | EFD_CLOEXEC` |
+| `NewTimerFD`, `NewTimerFDRealtime`, `NewTimerFDBoottime` | `TFD_NONBLOCK | TFD_CLOEXEC` |
+| `NewSignalFD` | `SFD_NONBLOCK | SFD_CLOEXEC` |
+| `NewPidFD` | `PIDFD_NONBLOCK`; close-on-exec is set by the kernel |
+| `NewPidFDBlocking` | Blocking pidfd; close-on-exec is still set by the kernel |
+| `NewMemFD`, `NewMemFDSealed`, `NewMemFDHugeTLB` | `MFD_CLOEXEC` plus memfd-specific flags; no creation-time nonblocking flag exists |
 
 ### MemFD Memory Mapping
 
@@ -154,9 +170,11 @@ mfd.Close()
 
 ## Safety Considerations
 
-- **Atomic Operations**: All FD access uses atomic load/store for concurrent safety
+- **Atomic Operations**: `Raw`, `Valid`, and same-cell `Close` use atomic access; callers still drain users before `Close()`
+- **Ownership**: `Close()` is idempotent for the same `FD` cell; copied open `FD` values are not independent owners
+- **Close Ordering**: Call `Close()` only after in-flight operations and borrowed raw descriptor users are drained
 - **Valid Check**: Use `Valid()` before operations on potentially closed descriptors
-- **Close Idempotency**: `Close()` can be called multiple times safely
+- **Duplication**: Use `Dup()` or `PidFD.GetFD()` when another closeable descriptor is required
 - **MappedRegion Lifetime**: `Bytes()` slice is only valid while the region is mapped
 
 ## License

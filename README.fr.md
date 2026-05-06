@@ -16,8 +16,10 @@ Langue: [English](./README.md) | [简体中文](./README.zh-CN.md) | [Español](
 ### Caractéristiques Principales
 
 - **Zéro Surcharge**: Toutes les interactions kernel via assembleur `zcall`, contournant les hooks syscall de Go
+- **Hot Paths sans Allocation**: Les chemins de succès à taille fixe de `EventFD`, `TimerFD` et `SignalFD` gardent les arguments syscall sur la pile
 - **Handles Spécialisés**: `EventFD`, `TimerFD`, `PidFD`, `MemFD`, `SignalFD` spécifiques à Linux
 - **Noyau Multiplateforme**: Les opérations de base `FD` fonctionnent sur Linux, Darwin et FreeBSD
+- **Propriété Explicite**: L'idempotence de fermeture de `FD` s'applique à une seule cellule de descripteur; fermez après avoir drainé les utilisateurs et utilisez `Dup` pour un propriétaire de fermeture indépendant
 
 ## Installation
 
@@ -27,11 +29,39 @@ go get code.hybscloud.com/iofd
 
 ## Démarrage Rapide
 
+### Signalisation EventFD
+
 ```go
 efd, _ := iofd.NewEventFD(0)
+defer efd.Close()
+
 efd.Signal(1)
 val, _ := efd.Wait() // val == 1
-efd.Close()
+```
+
+### TimerFD
+
+```go
+tfd, _ := iofd.NewTimerFD()
+defer tfd.Close()
+
+// Minuterie one-shot à 100ms
+tfd.ArmDuration(100*time.Millisecond, 0)
+// ... attendre avec poll/epoll/io_uring ...
+count, _ := tfd.Expirations() // count == 1
+```
+
+### Gestion des Erreurs
+
+```go
+_, err := efd.Wait()
+if errors.Is(err, iox.ErrWouldBlock) {
+    // Non bloquant, aucune donnée disponible: réessayer plus tard
+} else if errors.Is(err, iofd.ErrClosed) {
+    // FD fermé
+} else if err != nil {
+    // Autre erreur
+}
 ```
 
 ## API
@@ -40,7 +70,7 @@ efd.Close()
 
 | Type | Description |
 |------|-------------|
-| `FD` | Descripteur de fichier universel avec opérations atomiques |
+| `FD` | Cellule de descripteur de fichier avec opérations atomiques de cycle de vie sur la même cellule |
 | `EventFD` | eventfd Linux pour la signalisation inter-threads |
 | `TimerFD` | timerfd Linux pour les minuteries haute résolution |
 | `PidFD` | pidfd Linux pour la gestion de processus sans condition de course |
@@ -56,18 +86,21 @@ efd.Close()
 | `PollCloser` | `Fd()`, `Close()` | Descripteur interrogeable fermable |
 | `Handle` | `Fd()`, `Close()`, `Read()`, `Write()` | Handle d'E/S complet |
 | `Signaler` | `Signal()`, `Wait()` | Mécanisme de signalisation |
-| `Timer` | `Arm()`, `Disarm()`, `Read()` | Handle de minuterie |
+| `Timer` | `Arm()`, `Disarm()` | Handle de minuterie |
 
 ### Opérations FD
 
 ```go
 // Créer FD depuis un descripteur brut
 fd := iofd.NewFD(rawFd)
+// NewFD prend la propriété de fermeture. Ne fermez pas les valeurs FD copiées;
+// fermez seulement après avoir drainé les utilisateurs. Utilisez fd.Dup()
+// pour un propriétaire de descripteur indépendant.
 
 // Opérations atomiques
 fd.Raw()           // Obtenir la valeur int32 brute
 fd.Valid()         // Vérifier si valide (non négatif)
-fd.Close()         // Fermeture idempotente
+fd.Close()         // Fermeture même-cellule après drainage
 
 // Opérations d'E/S
 fd.Read(buf)       // Lire des octets
@@ -78,6 +111,17 @@ fd.SetNonblock(true)   // Définir O_NONBLOCK
 fd.SetCloexec(true)    // Définir FD_CLOEXEC
 fd.Dup()               // Dupliquer avec CLOEXEC
 ```
+
+### Drapeaux des Constructeurs
+
+| Constructeur | Drapeaux par défaut |
+|--------------|---------------------|
+| `NewEventFD`, `NewEventFDSemaphore` | `EFD_NONBLOCK | EFD_CLOEXEC` |
+| `NewTimerFD`, `NewTimerFDRealtime`, `NewTimerFDBoottime` | `TFD_NONBLOCK | TFD_CLOEXEC` |
+| `NewSignalFD` | `SFD_NONBLOCK | SFD_CLOEXEC` |
+| `NewPidFD` | `PIDFD_NONBLOCK`; close-on-exec est défini par le kernel |
+| `NewPidFDBlocking` | pidfd bloquant; close-on-exec reste défini par le kernel |
+| `NewMemFD`, `NewMemFDSealed`, `NewMemFDHugeTLB` | `MFD_CLOEXEC` plus drapeaux propres à memfd; aucun drapeau nonblocking n'existe à la création |
 
 ### Mappage Mémoire MemFD
 
@@ -126,9 +170,11 @@ mfd.Close()
 
 ## Considérations de Sécurité
 
-- **Opérations Atomiques**: Tous les accès FD utilisent chargement/stockage atomique pour la sécurité concurrente
+- **Opérations Atomiques**: `Raw`, `Valid` et `Close` sur la même cellule `FD` utilisent un accès atomique; l'appelant doit toujours drainer les utilisateurs avant `Close()`
+- **Propriété**: `Close()` est idempotent pour la même cellule `FD`; les valeurs `FD` ouvertes copiées ne sont pas des propriétaires indépendants
+- **Ordre de Fermeture**: Appelez `Close()` seulement après avoir drainé les opérations en cours et les utilisateurs de descripteurs raw empruntés
 - **Vérification de Validité**: Utilisez `Valid()` avant les opérations sur des descripteurs potentiellement fermés
-- **Idempotence de Close**: `Close()` peut être appelé plusieurs fois en toute sécurité
+- **Duplication**: Utilisez `Dup()` ou `PidFD.GetFD()` lorsqu'un autre descripteur fermable est requis
 - **Durée de Vie de MappedRegion**: Le slice `Bytes()` n'est valide que pendant le mappage de la région
 
 ## Licence

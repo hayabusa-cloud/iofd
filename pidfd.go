@@ -15,6 +15,8 @@ import (
 //
 // A pidfd becomes readable when the process terminates, making it
 // suitable for polling via epoll and io_uring.
+// pidfd_open sets close-on-exec on returned pidfds.
+// Do not copy PidFD after first use.
 //
 // Invariants:
 //   - The pidfd refers to a specific process instance, not just a PID.
@@ -26,7 +28,7 @@ type PidFD struct {
 }
 
 // NewPidFD creates a new pidfd for the specified process ID.
-// The pidfd is created with PIDFD_NONBLOCK flag.
+// The pidfd is created with PIDFD_NONBLOCK. pidfd_open sets close-on-exec.
 //
 // Returns an error if the process does not exist or if pidfd is not supported.
 func NewPidFD(pid int) (*PidFD, error) {
@@ -34,7 +36,7 @@ func NewPidFD(pid int) (*PidFD, error) {
 }
 
 // NewPidFDBlocking creates a new pidfd for the specified process ID
-// without the PIDFD_NONBLOCK flag.
+// without the PIDFD_NONBLOCK flag. pidfd_open still sets close-on-exec.
 func NewPidFDBlocking(pid int) (*PidFD, error) {
 	return newPidFD(pid, 0)
 }
@@ -66,6 +68,8 @@ func (p *PidFD) Close() error {
 
 // Raw returns the raw file descriptor for use in tight loops.
 // The caller must ensure the PidFD remains valid while using the raw fd.
+// The returned descriptor number is borrowed and must not be closed directly.
+// Callers must synchronize Close with users of the borrowed descriptor number.
 //
 //go:nosplit
 func (p *PidFD) Raw() int32 {
@@ -102,8 +106,9 @@ func (p *PidFD) SendSignal(sig int) error {
 // This operation requires appropriate privileges (CAP_SYS_PTRACE or
 // being in the same user namespace with PTRACE_MODE_ATTACH_REALCREDS).
 //
-// Returns a new FD in the current process that refers to the same
-// open file description as targetFD in the target process.
+// Returns a new close-capable FD in the current process that refers to the same
+// open file description as targetFD in the target process. The returned FD has
+// close-on-exec set by the kernel.
 func (p *PidFD) GetFD(targetFD int) (FD, error) {
 	raw := p.fd.Raw()
 	if raw < 0 {
