@@ -7,6 +7,7 @@
 package iofd
 
 import (
+	"runtime"
 	"testing"
 	"unsafe"
 
@@ -1028,14 +1029,53 @@ func TestMemFD_TruncateAndSize(t *testing.T) {
 // PidFD Success Path Tests
 // =============================================================================
 
-// Linux amd64 syscall numbers not exported by zcall
 const (
-	sysGetpid        = 39 // SYS_GETPID
-	sysKill          = 62 // SYS_KILL
-	sysRtSigprocmask = 14 // SYS_RT_SIGPROCMASK
-	sigBlock         = 0  // SIG_BLOCK
-	sigUnblock       = 1  // SIG_UNBLOCK
+	sigBlock   = 0 // SIG_BLOCK
+	sigSetmask = 2 // SIG_SETMASK
 )
+
+func blockSignalForTest(t *testing.T, mask SigSet) {
+	t.Helper()
+
+	runtime.LockOSThread()
+	var oldMask SigSet
+	_, errno := zcall.Syscall4(
+		sysRtSigprocmask,
+		sigBlock,
+		uintptr(unsafe.Pointer(&mask)),
+		uintptr(unsafe.Pointer(&oldMask)),
+		8,
+	)
+	if errno != 0 {
+		runtime.UnlockOSThread()
+		t.Skipf("sigprocmask failed: %v", zcall.Errno(errno))
+	}
+
+	t.Cleanup(func() {
+		_, errno := zcall.Syscall4(
+			sysRtSigprocmask,
+			sigSetmask,
+			uintptr(unsafe.Pointer(&oldMask)),
+			0,
+			8,
+		)
+		if errno != 0 {
+			t.Errorf("restore signal mask failed: %v", zcall.Errno(errno))
+		}
+		runtime.UnlockOSThread()
+	})
+}
+
+func sendSignalToCurrentThreadForTest(t *testing.T, sig int) {
+	t.Helper()
+
+	pid, _ := zcall.Syscall4(sysGetpid, 0, 0, 0, 0)
+	tid, _ := zcall.Syscall4(sysGettid, 0, 0, 0, 0)
+	_, errno := zcall.Syscall4(sysTgkill, pid, tid, uintptr(sig), 0)
+	if errno != 0 {
+		t.Fatalf("tgkill(self, %d) failed: %v", sig, zcall.Errno(errno))
+	}
+}
 
 // TestPidFD_SendSignalToSelf tests SendSignal success by signaling our own process.
 func TestPidFD_SendSignalToSelf(t *testing.T) {
@@ -1066,22 +1106,7 @@ func TestSignalFD_ReadSuccess(t *testing.T) {
 	var mask SigSet
 	mask.Add(SIGUSR1)
 
-	// Block SIGUSR1: sigprocmask(SIG_BLOCK, &mask, nil)
-	_, errno := zcall.Syscall4(
-		sysRtSigprocmask,
-		sigBlock,
-		uintptr(unsafe.Pointer(&mask)),
-		0,
-		8, // sizeof(sigset_t) on amd64
-	)
-	if errno != 0 {
-		t.Skipf("sigprocmask failed: %v", zcall.Errno(errno))
-	}
-
-	// Unblock SIGUSR1 when done
-	defer func() {
-		zcall.Syscall4(sysRtSigprocmask, sigUnblock, uintptr(unsafe.Pointer(&mask)), 0, 8)
-	}()
+	blockSignalForTest(t, mask)
 
 	// Create signalfd
 	sfd, err := newSignalFD(mask, SFD_NONBLOCK|SFD_CLOEXEC)
@@ -1090,12 +1115,8 @@ func TestSignalFD_ReadSuccess(t *testing.T) {
 	}
 	defer sfd.Close()
 
-	// Send SIGUSR1 to ourselves
-	pid, _ := zcall.Syscall4(sysGetpid, 0, 0, 0, 0)
-	_, errno = zcall.Syscall4(sysKill, pid, SIGUSR1, 0, 0)
-	if errno != 0 {
-		t.Fatalf("kill(self, SIGUSR1) failed: %v", zcall.Errno(errno))
-	}
+	// Send SIGUSR1 to the locked test thread.
+	sendSignalToCurrentThreadForTest(t, SIGUSR1)
 
 	// ReadInto the signal - retry a few times to handle timing
 	var info SignalInfo
@@ -1114,8 +1135,7 @@ func TestSignalFD_ReadSuccess(t *testing.T) {
 		}
 	}
 	if err != nil {
-		t.Logf("SignalFD.ReadInto still blocked after retries (signal delivery timing): %v", err)
-		return
+		t.Fatalf("SignalFD.ReadInto still blocked after retries: %v", err)
 	}
 	if info.Signo != SIGUSR1 {
 		t.Errorf("Expected signal %d, got %d", SIGUSR1, info.Signo)
@@ -1127,21 +1147,7 @@ func TestSignalFD_ReadIOReaderSuccess(t *testing.T) {
 	var mask SigSet
 	mask.Add(SIGUSR2)
 
-	// Block SIGUSR2
-	_, errno := zcall.Syscall4(
-		sysRtSigprocmask,
-		sigBlock,
-		uintptr(unsafe.Pointer(&mask)),
-		0,
-		8,
-	)
-	if errno != 0 {
-		t.Skipf("sigprocmask failed: %v", zcall.Errno(errno))
-	}
-
-	defer func() {
-		zcall.Syscall4(sysRtSigprocmask, sigUnblock, uintptr(unsafe.Pointer(&mask)), 0, 8)
-	}()
+	blockSignalForTest(t, mask)
 
 	sfd, err := newSignalFD(mask, SFD_NONBLOCK|SFD_CLOEXEC)
 	if err != nil {
@@ -1149,12 +1155,8 @@ func TestSignalFD_ReadIOReaderSuccess(t *testing.T) {
 	}
 	defer sfd.Close()
 
-	// Send SIGUSR2 to ourselves
-	pid, _ := zcall.Syscall4(sysGetpid, 0, 0, 0, 0)
-	_, errno = zcall.Syscall4(sysKill, pid, SIGUSR2, 0, 0)
-	if errno != 0 {
-		t.Fatalf("kill(self, SIGUSR2) failed: %v", zcall.Errno(errno))
-	}
+	// Send SIGUSR2 to the locked test thread.
+	sendSignalToCurrentThreadForTest(t, SIGUSR2)
 
 	// Read (io.Reader) - retry a few times to handle timing
 	buf := make([]byte, 128)
@@ -1174,8 +1176,7 @@ func TestSignalFD_ReadIOReaderSuccess(t *testing.T) {
 		}
 	}
 	if err != nil {
-		t.Logf("SignalFD.Read still blocked after retries (signal delivery timing): %v", err)
-		return
+		t.Fatalf("SignalFD.Read still blocked after retries: %v", err)
 	}
 	if n != 128 {
 		t.Errorf("Expected 128 bytes, got %d", n)
@@ -1279,17 +1280,7 @@ func TestSignalFD_ReadTo(t *testing.T) {
 	var mask SigSet
 	mask.Add(SIGUSR1)
 
-	// Block SIGUSR1
-	_, errno := zcall.Syscall4(
-		sysRtSigprocmask,
-		1, // SIG_BLOCK
-		uintptr(unsafe.Pointer(&mask)),
-		0,
-		8,
-	)
-	if errno != 0 {
-		t.Fatalf("sigprocmask failed: %v", zcall.Errno(errno))
-	}
+	blockSignalForTest(t, mask)
 
 	sfd, err := NewSignalFD(mask)
 	if err != nil {
@@ -1304,12 +1295,8 @@ func TestSignalFD_ReadTo(t *testing.T) {
 		t.Errorf("ReadTo should return ErrWouldBlock when no signal pending, got: %v", err)
 	}
 
-	// Send SIGUSR1 to ourselves
-	pid, _ := zcall.Syscall4(sysGetpid, 0, 0, 0, 0)
-	_, errno = zcall.Syscall4(sysKill, pid, SIGUSR1, 0, 0)
-	if errno != 0 {
-		t.Fatalf("kill(self, SIGUSR1) failed: %v", zcall.Errno(errno))
-	}
+	// Send SIGUSR1 to the locked test thread.
+	sendSignalToCurrentThreadForTest(t, SIGUSR1)
 
 	// ReadTo should succeed now - retry for signal delivery timing
 	for range 10 {
@@ -1326,8 +1313,7 @@ func TestSignalFD_ReadTo(t *testing.T) {
 		}
 	}
 	if err != nil {
-		t.Logf("ReadTo still blocked after retries (signal delivery timing): %v", err)
-		return
+		t.Fatalf("ReadTo still blocked after retries: %v", err)
 	}
 	if info.Signo != SIGUSR1 {
 		t.Errorf("Expected signal %d, got %d", SIGUSR1, info.Signo)
@@ -1485,47 +1471,6 @@ func TestEventFD_SignalOverflow(t *testing.T) {
 	err = efd.Signal(2)
 	if err != iox.ErrWouldBlock {
 		t.Errorf("Signal overflow: expected ErrWouldBlock, got %v", err)
-	}
-}
-
-// TestSetNonblock_RaceClose attempts to trigger F_SETFL error by racing close.
-// This test tries to cover the F_SETFL error path by closing the fd
-// between F_GETFL and F_SETFL. Due to timing, coverage is not guaranteed.
-func TestSetNonblock_RaceClose(t *testing.T) {
-	for range 1000 {
-		efd, err := newEventFD(0, EFD_CLOEXEC)
-		if err != nil {
-			t.Fatalf("newEventFD failed: %v", err)
-		}
-		rawFd := efd.fd.Raw()
-
-		// Close immediately while trying SetNonblock
-		go func() {
-			zcall.Close(uintptr(rawFd))
-		}()
-
-		// This may fail with ErrClosed (F_GETFL fails) or
-		// with EBADF (F_SETFL fails) if timing is right
-		fd := NewFD(int(rawFd))
-		_ = fd.SetNonblock(true)
-	}
-}
-
-// TestSetCloexec_RaceClose attempts to trigger F_SETFD error by racing close.
-func TestSetCloexec_RaceClose(t *testing.T) {
-	for range 1000 {
-		efd, err := newEventFD(0, EFD_NONBLOCK)
-		if err != nil {
-			t.Fatalf("newEventFD failed: %v", err)
-		}
-		rawFd := efd.fd.Raw()
-
-		go func() {
-			zcall.Close(uintptr(rawFd))
-		}()
-
-		fd := NewFD(int(rawFd))
-		_ = fd.SetCloexec(true)
 	}
 }
 

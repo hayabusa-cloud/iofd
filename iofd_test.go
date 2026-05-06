@@ -537,9 +537,13 @@ func TestFD_ClosedOperations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewEventFD failed: %v", err)
 	}
+	defer efd.Close()
 
-	fd := iofd.NewFD(efd.Fd())
-	efd.Close()
+	base := iofd.NewFD(efd.Fd())
+	fd, err := base.Dup()
+	if err != nil {
+		t.Fatalf("Dup failed: %v", err)
+	}
 
 	// Create a new closed FD
 	closedFD := iofd.InvalidFD
@@ -570,10 +574,15 @@ func TestFD_ClosedOperations(t *testing.T) {
 		t.Error("Dup on closed fd should fail")
 	}
 
+	if err = fd.Close(); err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
+
 	// Close on already closed should be no-op (idempotent)
 	err = fd.Close()
-	// This may or may not error depending on implementation
-	_ = err
+	if err != nil {
+		t.Errorf("Second Close should be no-op: %v", err)
+	}
 }
 
 // =============================================================================
@@ -1362,8 +1371,13 @@ func TestFD_CloseIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewEventFD failed: %v", err)
 	}
+	defer efd.Close()
 
-	fd := iofd.NewFD(efd.Fd())
+	base := iofd.NewFD(efd.Fd())
+	fd, err := base.Dup()
+	if err != nil {
+		t.Fatalf("Dup failed: %v", err)
+	}
 
 	// First close should succeed
 	err = fd.Close()
