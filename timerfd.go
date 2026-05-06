@@ -18,24 +18,28 @@ import (
 // It provides a high-resolution timer that can be monitored via poll/epoll/io_uring.
 //
 // TimerFD is created with TFD_NONBLOCK and TFD_CLOEXEC by default.
+// Do not copy TimerFD after first use.
 type TimerFD struct {
 	_  noCopy
 	fd FD
 }
 
 // NewTimerFD creates a new timerfd using CLOCK_MONOTONIC.
+// The timerfd is created with TFD_NONBLOCK and TFD_CLOEXEC.
 // The timer is initially disarmed.
 func NewTimerFD() (*TimerFD, error) {
 	return newTimerFD(CLOCK_MONOTONIC, TFD_NONBLOCK|TFD_CLOEXEC)
 }
 
 // NewTimerFDRealtime creates a new timerfd using CLOCK_REALTIME.
+// The timerfd is created with TFD_NONBLOCK and TFD_CLOEXEC.
 // Use this for wall-clock time that adjusts with system time changes.
 func NewTimerFDRealtime() (*TimerFD, error) {
 	return newTimerFD(CLOCK_REALTIME, TFD_NONBLOCK|TFD_CLOEXEC)
 }
 
 // NewTimerFDBoottime creates a new timerfd using CLOCK_BOOTTIME.
+// The timerfd is created with TFD_NONBLOCK and TFD_CLOEXEC.
 // This clock includes time spent in suspend.
 func NewTimerFDBoottime() (*TimerFD, error) {
 	return newTimerFD(CLOCK_BOOTTIME, TFD_NONBLOCK|TFD_CLOEXEC)
@@ -72,6 +76,7 @@ func (t *TimerFD) Valid() bool {
 
 // Raw returns the raw file descriptor for use in tight loops.
 // The caller must ensure the TimerFD remains valid while using the raw fd.
+// The returned descriptor number is borrowed and must not be closed directly.
 //
 //go:nosplit
 func (t *TimerFD) Raw() int32 {
@@ -84,6 +89,8 @@ func (t *TimerFD) Raw() int32 {
 // Parameters:
 //   - initial: time until first expiration in nanoseconds (0 disarms)
 //   - interval: interval for periodic timer in nanoseconds (0 for one-shot)
+//
+// On the success path, Arm does not allocate heap memory.
 func (t *TimerFD) Arm(initial, interval int64) error {
 	raw := t.fd.Raw()
 	if raw < 0 {
@@ -117,6 +124,8 @@ func (t *TimerFD) Arm(initial, interval int64) error {
 // Parameters:
 //   - deadline: absolute time for first expiration (Unix nanoseconds)
 //   - interval: interval for periodic timer in nanoseconds (0 for one-shot)
+//
+// On the success path, ArmAt does not allocate heap memory.
 func (t *TimerFD) ArmAt(deadline, interval int64) error {
 	raw := t.fd.Raw()
 	if raw < 0 {
@@ -160,6 +169,7 @@ func (t *TimerFD) Disarm() error {
 // The returned value is the number of times the timer has expired since
 // the last successful read. For periodic timers, this may be > 1 if
 // multiple intervals elapsed before reading.
+// On the success path, Expirations does not allocate heap memory.
 func (t *TimerFD) Expirations() (uint64, error) {
 	raw := t.fd.Raw()
 	if raw < 0 {
@@ -178,7 +188,7 @@ func (t *TimerFD) Expirations() (uint64, error) {
 
 // ExpirationsInto reads expiration count into a caller-provided pointer.
 // Returns iox.ErrWouldBlock if no expirations have occurred (non-blocking mode).
-// This is the zero-allocation variant for use in hot paths.
+// This stores the result in caller-owned memory for hot paths.
 //
 // Postcondition: On success, *count contains the expiration count.
 func (t *TimerFD) ExpirationsInto(count *uint64) error {
@@ -220,6 +230,7 @@ func (t *TimerFD) Read(p []byte) (int, error) {
 
 // GetTime returns the current timer setting.
 // Returns (remaining time until expiration, interval) in nanoseconds.
+// On the success path, GetTime does not allocate heap memory.
 func (t *TimerFD) GetTime() (remaining, interval int64, err error) {
 	raw := t.fd.Raw()
 	if raw < 0 {

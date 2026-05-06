@@ -20,34 +20,54 @@ type noCopy struct{}
 func (*noCopy) Lock()   {}
 func (*noCopy) Unlock() {}
 
-// FD represents a file descriptor as a universal handle.
-// It wraps an int32 and provides atomic operations for safe concurrent access.
+// FD represents one close-capable file descriptor cell.
+// It stores the raw descriptor number as an int32 and uses atomic operations
+// for Raw, Valid, and same-cell Close access.
+//
+// An FD value is small and copyable as a Go value, but copying an open FD does
+// not duplicate kernel ownership. A copied FD contains the same descriptor
+// number in a different Go cell; closing both cells can close an unrelated
+// descriptor if the number is reused. Use Dup to create an independent
+// close-capable descriptor.
+//
+// FD does not serialize Close against in-flight operations or borrowed raw
+// descriptor users. Callers must stop and drain descriptor users before closing.
 //
 // Invariants:
 //   - A valid FD holds a non-negative value.
 //   - After Close(), the FD value becomes -1.
-//   - FD is safe for concurrent use; Close() is idempotent.
+//   - FD access is atomic through one addressable cell.
+//   - Close is idempotent for that same cell.
 type FD int32
 
 // InvalidFD represents an invalid file descriptor.
 const InvalidFD FD = -1
 
-// NewFD creates a new FD from a raw file descriptor value.
-// The caller is responsible for ensuring fd is valid.
+// NewFD creates an FD from a raw file descriptor value.
+// The caller is responsible for ensuring fd is valid and for transferring
+// close ownership to the returned FD. If the raw descriptor is only borrowed,
+// do not call Close on the returned value.
 func NewFD(fd int) FD {
 	return FD(fd)
 }
 
-// Raw returns the underlying file descriptor as an int32.
+// Raw returns the underlying file descriptor number as an int32.
 // Returns -1 if the FD is invalid or closed.
+//
+// Raw is a borrowed observation only. It does not transfer ownership and the
+// returned descriptor number must not be closed independently.
+// Callers must keep the FD open while using the returned number.
 //
 //go:nosplit
 func (fd *FD) Raw() int32 {
 	return atomic.LoadInt32((*int32)(fd))
 }
 
-// Fd returns the file descriptor as an int for interface compatibility.
+// Fd returns the file descriptor number as an int for interface compatibility.
 // Implements PollFd interface.
+//
+// The returned descriptor number is borrowed and is valid only while the FD
+// remains open.
 //
 //go:nosplit
 func (fd *FD) Fd() int {
@@ -61,8 +81,16 @@ func (fd *FD) Valid() bool {
 	return fd.Raw() >= 0
 }
 
-// Close closes the file descriptor.
-// It is safe to call Close multiple times; subsequent calls are no-ops.
+// Close closes the file descriptor owned by this FD cell.
+// It is safe to call Close multiple times on the same FD cell; subsequent
+// calls are no-ops.
+//
+// Close idempotence does not extend across copied FD values. Copying an open
+// FD copies the descriptor number, not ownership. Use Dup to create a second
+// descriptor that may be closed independently.
+//
+// Call Close only after all in-flight operations and borrowed raw descriptor
+// users are drained.
 // Returns nil if already closed.
 //
 // Postcondition: fd.Raw() == -1
@@ -171,8 +199,9 @@ func (fd *FD) SetCloexec(cloexec bool) error {
 	return nil
 }
 
-// Dup duplicates the file descriptor.
-// The new FD has FD_CLOEXEC set by default.
+// Dup duplicates the file descriptor and returns a new close-capable FD.
+// The returned FD refers to the same open file description through a distinct
+// descriptor-table entry and has FD_CLOEXEC set by default.
 func (fd *FD) Dup() (FD, error) {
 	raw := fd.Raw()
 	if raw < 0 {

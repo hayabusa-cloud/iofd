@@ -19,7 +19,8 @@ import (
 // An eventfd maintains an unsigned 64-bit counter. Writing adds to the counter,
 // reading returns and resets it (or decrements by 1 in semaphore mode).
 //
-// EventFD is created with O_NONBLOCK and O_CLOEXEC by default.
+// EventFD is created with EFD_NONBLOCK and EFD_CLOEXEC by default.
+// Do not copy EventFD after first use.
 type EventFD struct {
 	_  noCopy
 	fd FD
@@ -34,6 +35,7 @@ func NewEventFD(initval uint) (*EventFD, error) {
 }
 
 // NewEventFDSemaphore creates a new eventfd in semaphore mode.
+// The eventfd is created with EFD_SEMAPHORE, EFD_NONBLOCK, and EFD_CLOEXEC.
 // In semaphore mode, reads decrement the counter by 1 instead of resetting it.
 func NewEventFDSemaphore(initval uint) (*EventFD, error) {
 	return newEventFD(initval, EFD_SEMAPHORE|EFD_NONBLOCK|EFD_CLOEXEC)
@@ -70,6 +72,7 @@ func (e *EventFD) Valid() bool {
 
 // Raw returns the raw file descriptor for use in tight loops.
 // The caller must ensure the EventFD remains valid while using the raw fd.
+// The returned descriptor number is borrowed and must not be closed directly.
 //
 //go:nosplit
 func (e *EventFD) Raw() int32 {
@@ -81,6 +84,7 @@ func (e *EventFD) Raw() int32 {
 //
 // The maximum value is 0xFFFFFFFFFFFFFFFE (2^64 - 2).
 // Writing would block/fail if adding val would exceed this limit.
+// On the success path, Signal does not allocate heap memory.
 func (e *EventFD) Signal(val uint64) error {
 	if val == 0 {
 		return nil
@@ -104,6 +108,7 @@ func (e *EventFD) Signal(val uint64) error {
 // In semaphore mode, this decrements the counter by 1.
 //
 // Returns iox.ErrWouldBlock if the counter is zero (non-blocking mode).
+// On the success path, Wait does not allocate heap memory.
 func (e *EventFD) Wait() (uint64, error) {
 	raw := e.fd.Raw()
 	if raw < 0 {
@@ -122,7 +127,7 @@ func (e *EventFD) Wait() (uint64, error) {
 
 // WaitInto reads the eventfd counter value into a caller-provided pointer.
 // Returns iox.ErrWouldBlock if the counter is zero (non-blocking mode).
-// This is the zero-allocation variant for use in hot paths.
+// This stores the result in caller-owned memory for hot paths.
 //
 // Postcondition: On success, *val contains the counter value.
 func (e *EventFD) WaitInto(val *uint64) error {

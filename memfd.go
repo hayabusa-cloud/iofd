@@ -18,7 +18,9 @@ import (
 //   - Memory mapping without filesystem overhead
 //   - Sealing to prevent modifications
 //
-// MemFD is created with MFD_CLOEXEC by default.
+// MemFD is created with MFD_CLOEXEC by default. memfd_create has no
+// creation-time nonblocking flag.
+// Do not copy MemFD after first use.
 //
 // Invariants:
 //   - The file exists only in memory; it has no filesystem presence.
@@ -32,7 +34,8 @@ type MemFD struct {
 
 // NewMemFD creates a new memfd with the given name.
 // The name is used for debugging (visible in /proc/[pid]/fd/).
-// The memfd is created with MFD_CLOEXEC flag.
+// The memfd is created with MFD_CLOEXEC. It is not created nonblocking because
+// Linux memfd_create does not provide a nonblocking creation flag.
 //
 // The file is initially empty; call Truncate to set its size.
 func NewMemFD(name string) (*MemFD, error) {
@@ -40,12 +43,14 @@ func NewMemFD(name string) (*MemFD, error) {
 }
 
 // NewMemFDSealed creates a new memfd that allows sealing operations.
+// The memfd is created with MFD_CLOEXEC and MFD_ALLOW_SEALING.
 // Use this when you need to apply seals to prevent modifications.
 func NewMemFDSealed(name string) (*MemFD, error) {
 	return newMemFD(name, MFD_CLOEXEC|MFD_ALLOW_SEALING)
 }
 
 // NewMemFDHugeTLB creates a new memfd backed by huge pages.
+// The memfd is created with MFD_CLOEXEC and MFD_HUGETLB.
 // This can improve performance for large memory mappings.
 // The size must be a multiple of the huge page size.
 func NewMemFDHugeTLB(name string) (*MemFD, error) {
@@ -85,6 +90,8 @@ func (m *MemFD) Close() error {
 
 // Raw returns the raw file descriptor for use in tight loops.
 // The caller must ensure the MemFD remains valid while using the raw fd.
+// The returned descriptor number is borrowed and must not be closed directly.
+// Callers must synchronize Close with users of the borrowed descriptor number.
 //
 //go:nosplit
 func (m *MemFD) Raw() int32 {
@@ -239,6 +246,7 @@ func (r *MappedRegion) Len() int {
 
 // Bytes returns the mapped region as a byte slice.
 // The returned slice is only valid while the region is mapped.
+// After Unmap returns, all previously returned slices are invalid.
 //
 // Concurrency: The caller must synchronize access to the returned slice.
 // Concurrent reads are safe; concurrent writes require external locking.

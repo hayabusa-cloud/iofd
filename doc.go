@@ -13,11 +13,20 @@ Zero-Overhead: All kernel interactions use code.hybscloud.com/zcall exclusively,
 bypassing Go's standard library syscall hooks. This eliminates runtime scheduler
 overhead in hot paths.
 
-Atomic Lifecycle: FD uses atomic operations for concurrent-safe access. Close()
-is idempotent and can be called multiple times safely.
+Allocation Discipline: Fixed-size EventFD, TimerFD, and SignalFD success paths
+keep syscall argument storage stack-backed and do not allocate heap memory.
+Caller-provided Into methods keep result storage caller-owned.
 
-Non-Blocking Default: Constructors default to O_NONBLOCK | O_CLOEXEC. Operations
-return iox.ErrWouldBlock when they would block.
+Atomic Lifecycle: FD uses atomic operations through one addressable descriptor
+cell. Close() is idempotent for that same cell. Copying an open FD does not
+duplicate kernel ownership; use Dup() for an independent close-capable
+descriptor.
+
+Non-Blocking Constructors: EventFD, TimerFD, SignalFD, and NewPidFD create
+non-blocking descriptors by default. MemFD is created close-on-exec but has no
+creation-time nonblocking flag, and NewPidFDBlocking intentionally creates a
+blocking pidfd. Non-blocking operations return iox.ErrWouldBlock when they
+would block.
 
 # Supported Architectures
 
@@ -62,14 +71,20 @@ Timer example:
 
 # Safety Considerations
 
-Atomic Operations: All FD access uses atomic load/store. Multiple goroutines
-can safely call Valid(), Raw(), and Close() concurrently.
+Atomic Operations: FD access uses atomic load/store through one addressable FD
+cell. Atomicity protects same-cell state transitions; it does not make
+descriptor-number reuse safe if Close races with in-flight operations.
 
 Valid Check: Always check Valid() or handle ErrClosed before performing
 operations on potentially closed descriptors.
 
-Close Idempotency: Close() can be called multiple times safely. After Close(),
-Raw() returns -1 and operations return ErrClosed.
+Close Idempotency: Close() can be called multiple times safely on the same FD
+cell. Do not close copied FD values; they are not independent owners. After
+Close(), Raw() returns -1 and operations return ErrClosed.
+
+Close Ordering: Call Close only after all in-flight operations and borrowed raw
+descriptor users are drained. The package does not add hidden synchronization
+around kernel descriptor reuse.
 
 MappedRegion Lifetime: When using MemFD.Mmap(), the returned MappedRegion's
 Bytes() slice is only valid while the region is mapped. Call Unmap() when done.
