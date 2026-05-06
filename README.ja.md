@@ -16,8 +16,10 @@ Go言語向けUnixシステム用汎用ファイルディスクリプタ抽象�
 ### 主な特徴
 
 - **ゼロオーバーヘッド**: `zcall`アセンブリによる全カーネル操作、Goのsyscallフックをバイパス
+- **ゼロアロケーションホットパス**: 固定サイズの`EventFD`、`TimerFD`、`SignalFD`成功パスではsyscall引数をスタック上に保持します
 - **特殊ハンドル**: Linux固有の`EventFD`、`TimerFD`、`PidFD`、`MemFD`、`SignalFD`
 - **クロスプラットフォームコア**: 基本`FD`操作はLinux、Darwin、FreeBSDで動作
+- **明示的所有権**: `FD`のクローズ冪等性は同じディスクリプタセルにだけ適用されます。使用中の処理を排出してから閉じ、独立したクローズ所有者には`Dup`を使います
 
 ## インストール
 
@@ -27,11 +29,39 @@ go get code.hybscloud.com/iofd
 
 ## クイックスタート
 
+### EventFDシグナリング
+
 ```go
 efd, _ := iofd.NewEventFD(0)
+defer efd.Close()
+
 efd.Signal(1)
 val, _ := efd.Wait() // val == 1
-efd.Close()
+```
+
+### TimerFD
+
+```go
+tfd, _ := iofd.NewTimerFD()
+defer tfd.Close()
+
+// 100msのワンショットタイマー
+tfd.ArmDuration(100*time.Millisecond, 0)
+// ... poll/epoll/io_uringで待機 ...
+count, _ := tfd.Expirations() // count == 1
+```
+
+### エラー処理
+
+```go
+_, err := efd.Wait()
+if errors.Is(err, iox.ErrWouldBlock) {
+    // ノンブロッキングでデータなし。あとで再試行
+} else if errors.Is(err, iofd.ErrClosed) {
+    // FDは閉じられています
+} else if err != nil {
+    // その他のエラー
+}
 ```
 
 ## API
@@ -40,7 +70,7 @@ efd.Close()
 
 | 型 | 説明 |
 |----|------|
-| `FD` | アトミック操作を持つ汎用ファイルディスクリプタ |
+| `FD` | 同一セルのアトミックライフサイクル操作を持つファイルディスクリプタセル |
 | `EventFD` | スレッド間シグナリング用Linux eventfd |
 | `TimerFD` | 高精度タイマー用Linux timerfd |
 | `PidFD` | 競合のないプロセス管理用Linux pidfd |
@@ -56,18 +86,21 @@ efd.Close()
 | `PollCloser` | `Fd()`, `Close()` | クローズ可能なポーリングディスクリプタ |
 | `Handle` | `Fd()`, `Close()`, `Read()`, `Write()` | 完全I/Oハンドル |
 | `Signaler` | `Signal()`, `Wait()` | シグナリング機構 |
-| `Timer` | `Arm()`, `Disarm()`, `Read()` | タイマーハンドル |
+| `Timer` | `Arm()`, `Disarm()` | タイマーハンドル |
 
 ### FD操作
 
 ```go
 // 生ディスクリプタからFDを作成
 fd := iofd.NewFD(rawFd)
+// NewFDはクローズ所有権を受け取ります。コピーしたFD値を閉じないでください。
+// 使用中の処理を排出してから閉じてください。独立したディスクリプタ
+// 所有者が必要な場合はfd.Dup()を使います。
 
 // アトミック操作
 fd.Raw()           // 生int32値を取得
 fd.Valid()         // 有効かチェック（非負）
-fd.Close()         // 冪等クローズ
+fd.Close()         // 排出後に同じ FD セルを閉じる
 
 // I/O操作
 fd.Read(buf)       // バイト読み取り
@@ -78,6 +111,17 @@ fd.SetNonblock(true)   // O_NONBLOCKを設定
 fd.SetCloexec(true)    // FD_CLOEXECを設定
 fd.Dup()               // CLOEXECで複製
 ```
+
+### コンストラクタフラグ
+
+| コンストラクタ | デフォルトフラグ |
+|----------------|------------------|
+| `NewEventFD`, `NewEventFDSemaphore` | `EFD_NONBLOCK | EFD_CLOEXEC` |
+| `NewTimerFD`, `NewTimerFDRealtime`, `NewTimerFDBoottime` | `TFD_NONBLOCK | TFD_CLOEXEC` |
+| `NewSignalFD` | `SFD_NONBLOCK | SFD_CLOEXEC` |
+| `NewPidFD` | `PIDFD_NONBLOCK`。close-on-execはカーネルが設定 |
+| `NewPidFDBlocking` | ブロッキングpidfd。close-on-execは引き続きカーネルが設定 |
+| `NewMemFD`, `NewMemFDSealed`, `NewMemFDHugeTLB` | `MFD_CLOEXEC`とmemfd固有フラグ。作成時nonblockingフラグは存在しません |
 
 ### MemFDメモリマッピング
 
@@ -126,9 +170,11 @@ mfd.Close()
 
 ## 安全性に関する考慮事項
 
-- **アトミック操作**: 全FDアクセスは並行安全性のためアトミックロード/ストアを使用
+- **アトミック操作**: `Raw`、`Valid`、同じ`FD`セルの`Close`はアトミックアクセスを使います。呼び出し側は`Close()`前に使用者を排出する必要があります
+- **所有権**: `Close()`は同じ`FD`セルに対してのみ冪等です。コピーされた開いた`FD`値は独立所有者ではありません
+- **クローズ順序**: 進行中の操作と借用されたrawディスクリプタ使用者を排出してから`Close()`を呼び出してください
 - **有効性チェック**: 閉じられた可能性のあるディスクリプタに対する操作前に`Valid()`を使用
-- **クローズの冪等性**: `Close()`は安全に複数回呼び出し可能
+- **複製**: 別のクローズ可能ディスクリプタが必要な場合は`Dup()`または`PidFD.GetFD()`を使います
 - **MappedRegionのライフタイム**: `Bytes()`スライスは領域がマップされている間のみ有効
 
 ## ライセンス
