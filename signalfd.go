@@ -30,8 +30,8 @@ type SignalFD struct {
 }
 
 // SigSet represents a signal set for signalfd operations.
-// On supported Linux 64-bit architectures, this is a 64-bit mask where bit N
-// represents signal N+1.
+// This package represents it as a 64-bit mask where bit N represents signal
+// N+1.
 //
 // Limitation: This implementation supports signals 1-64 only.
 // Real-time signals beyond SIGRTMIN+32 (signal 64) are not supported.
