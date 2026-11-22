@@ -1,6 +1,7 @@
 # iofd
 
 [![Go Reference](https://pkg.go.dev/badge/code.hybscloud.com/iofd.svg)](https://pkg.go.dev/code.hybscloud.com/iofd)
+[![Benchmarks](https://github.com/hayabusa-cloud/iofd/actions/workflows/benchmarks.yml/badge.svg)](https://github.com/hayabusa-cloud/iofd/actions/workflows/benchmarks.yml)
 [![Codecov](https://codecov.io/gh/hayabusa-cloud/iofd/graph/badge.svg)](https://codecov.io/gh/hayabusa-cloud/iofd)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
@@ -178,6 +179,12 @@ mfd.Close()
 | FreeBSD/amd64 | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
 
 **Note**: Specialized handles (`EventFD`, `TimerFD`, etc.) are Linux-specific kernel primitives. On Darwin and FreeBSD, only the core `FD` type is available.
+
+## Benchmarks
+
+On Linux, `make bench` runs ten 200 ms samples per benchmark with `-cpu=1` and reports time and allocations. Use `make bench BENCH=EventFD` to select the eventfd workloads.
+
+To compare revisions, save the output from each on the same machine with the same kernel and Go version, then run `benchstat before.txt after.txt`. `BenchmarkEventFD_SignalWait` times one signal/wait pair. The timer expiration benchmarks report `retries/op` per completed read.
 
 ## Safety Considerations
 

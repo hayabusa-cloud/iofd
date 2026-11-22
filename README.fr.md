@@ -1,6 +1,7 @@
 # iofd
 
 [![Go Reference](https://pkg.go.dev/badge/code.hybscloud.com/iofd.svg)](https://pkg.go.dev/code.hybscloud.com/iofd)
+[![Benchmarks](https://github.com/hayabusa-cloud/iofd/actions/workflows/benchmarks.yml/badge.svg)](https://github.com/hayabusa-cloud/iofd/actions/workflows/benchmarks.yml)
 [![Codecov](https://codecov.io/gh/hayabusa-cloud/iofd/graph/badge.svg)](https://codecov.io/gh/hayabusa-cloud/iofd)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
@@ -178,6 +179,12 @@ mfd.Close()
 | FreeBSD/amd64 | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
 
 **Note**: Les handles spécialisés (`EventFD`, `TimerFD`, etc.) sont des primitives kernel spécifiques à Linux. Sur Darwin et FreeBSD, seul le type `FD` noyau est disponible.
+
+## Benchmarks
+
+Sous Linux, `make bench` mesure chaque benchmark dix fois pendant 200 ms avec `-cpu=1` et indique le temps et les allocations mémoire. Utilisez `make bench BENCH=EventFD` pour sélectionner les benchmarks d’eventfd.
+
+Pour comparer deux révisions, enregistrez leurs résultats sur la même machine, avec les mêmes versions du noyau et de Go, puis lancez `benchstat before.txt after.txt`. `BenchmarkEventFD_SignalWait` mesure le temps cumulé de l’envoi d’un signal et de son attente. Pour les lectures d’expirations du minuteur, `retries/op` indique le nombre de nouvelles tentatives par lecture aboutie.
 
 ## Considérations de Sécurité
 

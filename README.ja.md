@@ -1,6 +1,7 @@
 # iofd
 
 [![Go Reference](https://pkg.go.dev/badge/code.hybscloud.com/iofd.svg)](https://pkg.go.dev/code.hybscloud.com/iofd)
+[![Benchmarks](https://github.com/hayabusa-cloud/iofd/actions/workflows/benchmarks.yml/badge.svg)](https://github.com/hayabusa-cloud/iofd/actions/workflows/benchmarks.yml)
 [![Codecov](https://codecov.io/gh/hayabusa-cloud/iofd/graph/badge.svg)](https://codecov.io/gh/hayabusa-cloud/iofd)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
@@ -178,6 +179,12 @@ mfd.Close()
 | FreeBSD/amd64 | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
 
 **注意**: 特殊ハンドル（`EventFD`、`TimerFD`など）はLinux固有のカーネルプリミティブです。DarwinとFreeBSDでは、コア`FD`型のみ利用可能です。
+
+## ベンチマーク
+
+Linux で `make bench` を実行すると、`-cpu=1` で各ベンチマークを 200 ミリ秒ずつ 10 回測定し、実行時間とメモリ割り当てを表示します。`make bench BENCH=EventFD` で eventfd の測定だけを実行できます。
+
+リビジョンを比較するには、同じマシンでカーネルと Go のバージョンを揃え、それぞれの出力を保存して `benchstat before.txt after.txt` を実行します。`BenchmarkEventFD_SignalWait` はシグナルの送信と待機を 1 組として測定します。タイマーの満了回数を読むベンチマークでは、読み取りが完了するまでのリトライ回数を `retries/op` で示します。
 
 ## 安全性に関する考慮事項
 

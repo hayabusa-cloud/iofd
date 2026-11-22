@@ -1,6 +1,7 @@
 # iofd
 
 [![Go Reference](https://pkg.go.dev/badge/code.hybscloud.com/iofd.svg)](https://pkg.go.dev/code.hybscloud.com/iofd)
+[![Benchmarks](https://github.com/hayabusa-cloud/iofd/actions/workflows/benchmarks.yml/badge.svg)](https://github.com/hayabusa-cloud/iofd/actions/workflows/benchmarks.yml)
 [![Codecov](https://codecov.io/gh/hayabusa-cloud/iofd/graph/badge.svg)](https://codecov.io/gh/hayabusa-cloud/iofd)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
@@ -178,6 +179,12 @@ mfd.Close()
 | FreeBSD/amd64 | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
 
 **注意**: 专用句柄（`EventFD`、`TimerFD` 等）是 Linux 特有的内核原语。在 Darwin 和 FreeBSD 上，仅核心 `FD` 类型可用。
+
+## 基准测试
+
+在 Linux 上，`make bench` 使用 `-cpu=1` 为每个基准测试采集 10 个 200 毫秒的样本，并报告耗时和内存分配。使用 `make bench BENCH=EventFD` 可只运行 eventfd 测试。
+
+比较两个版本时，请在同一台机器上使用相同的内核和 Go 版本，分别保存输出，再运行 `benchstat before.txt after.txt`。`BenchmarkEventFD_SignalWait` 测量一次发送信号和一次等待的总耗时。定时器到期读取基准测试用 `retries/op` 表示每次成功读取所需的重试次数。
 
 ## 安全注意事项
 
