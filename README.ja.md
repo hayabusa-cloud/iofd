@@ -1,7 +1,6 @@
 # iofd
 
 [![Go Reference](https://pkg.go.dev/badge/code.hybscloud.com/iofd.svg)](https://pkg.go.dev/code.hybscloud.com/iofd)
-[![Go Report Card](https://goreportcard.com/badge/github.com/hayabusa-cloud/iofd)](https://goreportcard.com/report/github.com/hayabusa-cloud/iofd)
 [![Codecov](https://codecov.io/gh/hayabusa-cloud/iofd/graph/badge.svg)](https://codecov.io/gh/hayabusa-cloud/iofd)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
@@ -90,38 +89,50 @@ if errors.Is(err, iox.ErrWouldBlock) {
 
 ### FD操作
 
+この関数は `O_RDWR` で開いた一時ファイルのディスクリプタ `rawFd` の所有権を引き受けます。ファイルの内容は `ab` で、最初のオフセットは 0 です。
+
 ```go
-// 生ディスクリプタからFDを作成
 fd := iofd.NewFD(rawFd)
-// NewFDはクローズ所有権を受け取ります。コピーしたFD値を閉じないでください。
-// 使用中の処理を排出してから閉じてください。独立したディスクリプタ
-// 所有者が必要な場合はfd.Dup()を使います。
+defer fd.Close()
 
-// アトミック操作
-fd.Raw()           // 生int32値を取得
-fd.Valid()         // 有効かチェック（非負）
-fd.Close()         // 排出後に同じ FD セルを閉じる
+dup, err := fd.Dup() // 別々に閉じられますが、ファイルオフセットは共有します。
+if err != nil {
+	return 0, err
+}
+defer dup.Close()
 
-// I/O操作
-fd.Read(buf)       // バイト読み取り
-fd.Write(buf)      // バイト書き込み
-
-// ディスクリプタフラグ
-fd.SetNonblock(true)   // O_NONBLOCKを設定
-fd.SetCloexec(true)    // FD_CLOEXECを設定
-fd.Dup()               // CLOEXECで複製
+var buf [1]byte
+n, err := fd.Read(buf[:]) // 'a' を読み取ると、共有オフセットが 1 に進みます。
+if err != nil {
+	return 0, err
+}
+return dup.Write(buf[:n]) // 'b' を上書きし、ファイルの内容は "aa" になります。
 ```
+
+`rawFd` を借りている場合は、`Dup` が戻るまで元のディスクリプタを開いたままにし、使い終わったら複製だけを閉じます。
+
+| 操作 | 効果 |
+|-----------|------|
+| `fd.Raw()` | ディスクリプタ番号（`int32`）を借用します。この番号を使う間は `fd` を開いたままにします。 |
+| `fd.Valid()` | 保持しているディスクリプタ番号が 0 以上かどうかを返します。確認の直後に別の goroutine が `fd` を閉じることがあります。 |
+| `fd.SetNonblock(true)` | `fd` とその複製で共有する `O_NONBLOCK` を有効にします。 |
+| `fd.SetCloexec(true)` | `fd` にだけ `FD_CLOEXEC` を設定します。`Dup` は新しいディスクリプタにもこのフラグを自動で設定します。 |
 
 ### コンストラクタフラグ
 
-| コンストラクタ | デフォルトフラグ |
+| コンストラクタ | 作成時のフラグ |
 |----------------|------------------|
-| `NewEventFD`, `NewEventFDSemaphore` | `EFD_NONBLOCK | EFD_CLOEXEC` |
-| `NewTimerFD`, `NewTimerFDRealtime`, `NewTimerFDBoottime` | `TFD_NONBLOCK | TFD_CLOEXEC` |
-| `NewSignalFD` | `SFD_NONBLOCK | SFD_CLOEXEC` |
-| `NewPidFD` | `PIDFD_NONBLOCK`。close-on-execはカーネルが設定 |
-| `NewPidFDBlocking` | ブロッキングpidfd。close-on-execは引き続きカーネルが設定 |
-| `NewMemFD`, `NewMemFDSealed`, `NewMemFDHugeTLB` | `MFD_CLOEXEC`とmemfd固有フラグ。作成時nonblockingフラグは存在しません |
+| `NewEventFD` | `EFD_NONBLOCK`, `EFD_CLOEXEC` |
+| `NewEventFDSemaphore` | `EFD_SEMAPHORE`, `EFD_NONBLOCK`, `EFD_CLOEXEC` |
+| `NewTimerFD`, `NewTimerFDRealtime`, `NewTimerFDBoottime` | `TFD_NONBLOCK`, `TFD_CLOEXEC` |
+| `NewSignalFD` | `SFD_NONBLOCK`, `SFD_CLOEXEC` |
+| `NewPidFD` | `PIDFD_NONBLOCK` |
+| `NewPidFDBlocking` | `0` |
+| `NewMemFD` | `MFD_CLOEXEC` |
+| `NewMemFDSealed` | `MFD_CLOEXEC`, `MFD_ALLOW_SEALING` |
+| `NewMemFDHugeTLB` | `MFD_CLOEXEC`, `MFD_HUGETLB` |
+
+`pidfd_open` はフラグに `0` を渡しても `FD_CLOEXEC` を設定します。`memfd_create` にはノンブロッキング I/O を指定するフラグがありません。
 
 ### MemFDメモリマッピング
 
@@ -173,7 +184,6 @@ mfd.Close()
 - **アトミック操作**: `Raw`、`Valid`、同じ`FD`セルの`Close`はアトミックアクセスを使います。呼び出し側は`Close()`前に使用者を排出する必要があります
 - **所有権**: `Close()`は同じ`FD`セルに対してのみ冪等です。コピーされた開いた`FD`値は独立所有者ではありません
 - **クローズ順序**: 進行中の操作と借用されたrawディスクリプタ使用者を排出してから`Close()`を呼び出してください
-- **有効性チェック**: 閉じられた可能性のあるディスクリプタに対する操作前に`Valid()`を使用
 - **複製**: 別のクローズ可能ディスクリプタが必要な場合は`Dup()`または`PidFD.GetFD()`を使います
 - **MappedRegionのライフタイム**: `Bytes()`スライスは領域がマップされている間のみ有効
 

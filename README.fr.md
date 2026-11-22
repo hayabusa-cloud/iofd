@@ -1,7 +1,6 @@
 # iofd
 
 [![Go Reference](https://pkg.go.dev/badge/code.hybscloud.com/iofd.svg)](https://pkg.go.dev/code.hybscloud.com/iofd)
-[![Go Report Card](https://goreportcard.com/badge/github.com/hayabusa-cloud/iofd)](https://goreportcard.com/report/github.com/hayabusa-cloud/iofd)
 [![Codecov](https://codecov.io/gh/hayabusa-cloud/iofd/graph/badge.svg)](https://codecov.io/gh/hayabusa-cloud/iofd)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
@@ -90,38 +89,50 @@ if errors.Is(err, iox.ErrWouldBlock) {
 
 ### Opérations FD
 
+Cette fonction prend en charge la fermeture de `rawFd`, le descripteur d’un fichier temporaire ouvert avec `O_RDWR`. Le fichier contient `ab` et la position initiale est 0.
+
 ```go
-// Créer FD depuis un descripteur brut
 fd := iofd.NewFD(rawFd)
-// NewFD prend la propriété de fermeture. Ne fermez pas les valeurs FD copiées;
-// fermez seulement après avoir drainé les utilisateurs. Utilisez fd.Dup()
-// pour un propriétaire de descripteur indépendant.
+defer fd.Close()
 
-// Opérations atomiques
-fd.Raw()           // Obtenir la valeur int32 brute
-fd.Valid()         // Vérifier si valide (non négatif)
-fd.Close()         // Fermeture même-cellule après drainage
+dup, err := fd.Dup() // Deux descripteurs, une même position dans le fichier.
+if err != nil {
+	return 0, err
+}
+defer dup.Close()
 
-// Opérations d'E/S
-fd.Read(buf)       // Lire des octets
-fd.Write(buf)      // Écrire des octets
-
-// Drapeaux du descripteur
-fd.SetNonblock(true)   // Définir O_NONBLOCK
-fd.SetCloexec(true)    // Définir FD_CLOEXEC
-fd.Dup()               // Dupliquer avec CLOEXEC
+var buf [1]byte
+n, err := fd.Read(buf[:]) // Lit 'a' et fait passer la position commune à 1.
+if err != nil {
+	return 0, err
+}
+return dup.Write(buf[:n]) // Écrase le 'b'. Le fichier contient alors "aa".
 ```
+
+Si `rawFd` est emprunté, gardez l’original ouvert jusqu’au retour de `Dup` et fermez uniquement le duplicata.
+
+| Opération | Effet |
+|-----------|------|
+| `fd.Raw()` | Renvoie le numéro du descripteur en prêt (`int32`). Gardez `fd` ouvert tant que vous utilisez ce numéro. |
+| `fd.Valid()` | Indique si le numéro de descripteur stocké est positif ou nul. Une autre goroutine peut fermer `fd` juste après cet appel. |
+| `fd.SetNonblock(true)` | Active `O_NONBLOCK` pour `fd` et ses duplicatas. |
+| `fd.SetCloexec(true)` | Active `FD_CLOEXEC` uniquement sur `fd`. `Dup` active automatiquement ce drapeau sur le nouveau descripteur. |
 
 ### Drapeaux des Constructeurs
 
-| Constructeur | Drapeaux par défaut |
+| Constructeur | Drapeaux de création |
 |--------------|---------------------|
-| `NewEventFD`, `NewEventFDSemaphore` | `EFD_NONBLOCK | EFD_CLOEXEC` |
-| `NewTimerFD`, `NewTimerFDRealtime`, `NewTimerFDBoottime` | `TFD_NONBLOCK | TFD_CLOEXEC` |
-| `NewSignalFD` | `SFD_NONBLOCK | SFD_CLOEXEC` |
-| `NewPidFD` | `PIDFD_NONBLOCK`; close-on-exec est défini par le kernel |
-| `NewPidFDBlocking` | pidfd bloquant; close-on-exec reste défini par le kernel |
-| `NewMemFD`, `NewMemFDSealed`, `NewMemFDHugeTLB` | `MFD_CLOEXEC` plus drapeaux propres à memfd; aucun drapeau nonblocking n'existe à la création |
+| `NewEventFD` | `EFD_NONBLOCK`, `EFD_CLOEXEC` |
+| `NewEventFDSemaphore` | `EFD_SEMAPHORE`, `EFD_NONBLOCK`, `EFD_CLOEXEC` |
+| `NewTimerFD`, `NewTimerFDRealtime`, `NewTimerFDBoottime` | `TFD_NONBLOCK`, `TFD_CLOEXEC` |
+| `NewSignalFD` | `SFD_NONBLOCK`, `SFD_CLOEXEC` |
+| `NewPidFD` | `PIDFD_NONBLOCK` |
+| `NewPidFDBlocking` | `0` |
+| `NewMemFD` | `MFD_CLOEXEC` |
+| `NewMemFDSealed` | `MFD_CLOEXEC`, `MFD_ALLOW_SEALING` |
+| `NewMemFDHugeTLB` | `MFD_CLOEXEC`, `MFD_HUGETLB` |
+
+`pidfd_open` active `FD_CLOEXEC` même lorsque les drapeaux de création valent `0`. `memfd_create` ne propose aucun drapeau pour les E/S non bloquantes.
 
 ### Mappage Mémoire MemFD
 
@@ -173,7 +184,6 @@ mfd.Close()
 - **Opérations Atomiques**: `Raw`, `Valid` et `Close` sur la même cellule `FD` utilisent un accès atomique; l'appelant doit toujours drainer les utilisateurs avant `Close()`
 - **Propriété**: `Close()` est idempotent pour la même cellule `FD`; les valeurs `FD` ouvertes copiées ne sont pas des propriétaires indépendants
 - **Ordre de Fermeture**: Appelez `Close()` seulement après avoir drainé les opérations en cours et les utilisateurs de descripteurs raw empruntés
-- **Vérification de Validité**: Utilisez `Valid()` avant les opérations sur des descripteurs potentiellement fermés
 - **Duplication**: Utilisez `Dup()` ou `PidFD.GetFD()` lorsqu'un autre descripteur fermable est requis
 - **Durée de Vie de MappedRegion**: Le slice `Bytes()` n'est valide que pendant le mappage de la région
 

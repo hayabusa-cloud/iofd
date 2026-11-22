@@ -1,7 +1,6 @@
 # iofd
 
 [![Go Reference](https://pkg.go.dev/badge/code.hybscloud.com/iofd.svg)](https://pkg.go.dev/code.hybscloud.com/iofd)
-[![Go Report Card](https://goreportcard.com/badge/github.com/hayabusa-cloud/iofd)](https://goreportcard.com/report/github.com/hayabusa-cloud/iofd)
 [![Codecov](https://codecov.io/gh/hayabusa-cloud/iofd/graph/badge.svg)](https://codecov.io/gh/hayabusa-cloud/iofd)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
@@ -90,37 +89,50 @@ if errors.Is(err, iox.ErrWouldBlock) {
 
 ### FD 操作
 
+这个函数接管描述符 `rawFd`。它指向一个以 `O_RDWR` 打开的临时文件，内容为 `ab`，当前偏移量为 0。
+
 ```go
-// 从原始描述符创建 FD
 fd := iofd.NewFD(rawFd)
-// NewFD 接收关闭所有权。不要关闭复制出来的 FD 值；
-// 等待使用方排空后再关闭。需要独立描述符所有者时请使用 fd.Dup()。
+defer fd.Close()
 
-// 原子操作
-fd.Raw()           // 获取原始 int32 值
-fd.Valid()         // 检查是否有效（非负）
-fd.Close()         // 排空后关闭同一 FD 单元
+dup, err := fd.Dup() // 两个描述符可分别关闭，共享文件偏移量。
+if err != nil {
+	return 0, err
+}
+defer dup.Close()
 
-// I/O 操作
-fd.Read(buf)       // 读取字节
-fd.Write(buf)      // 写入字节
-
-// 描述符标志
-fd.SetNonblock(true)   // 设置 O_NONBLOCK
-fd.SetCloexec(true)    // 设置 FD_CLOEXEC
-fd.Dup()               // 带 CLOEXEC 复制
+var buf [1]byte
+n, err := fd.Read(buf[:]) // 读出 'a'，共享偏移量变为 1。
+if err != nil {
+	return 0, err
+}
+return dup.Write(buf[:n]) // 覆盖 'b'，文件内容变为 "aa"。
 ```
+
+如果 `rawFd` 是借用的，请让原描述符保持打开，直到 `Dup` 返回。用完后只关闭副本。
+
+| 操作 | 效果 |
+|-----------|------|
+| `fd.Raw()` | 返回借用的描述符编号（`int32`）。使用该编号期间须保持 `fd` 打开。 |
+| `fd.Valid()` | 检查保存的描述符编号是否非负。检查结束后，另一个 goroutine 仍可立即关闭 `fd`。 |
+| `fd.SetNonblock(true)` | 设置 `O_NONBLOCK`，对 `fd` 和它的副本都生效。 |
+| `fd.SetCloexec(true)` | 只为 `fd` 设置 `FD_CLOEXEC`。`Dup` 会自动为新描述符设置该标志。 |
 
 ### 构造函数标志
 
-| 构造函数 | 默认标志 |
+| 构造函数 | 创建时的标志 |
 |----------|----------|
-| `NewEventFD`, `NewEventFDSemaphore` | `EFD_NONBLOCK | EFD_CLOEXEC` |
-| `NewTimerFD`, `NewTimerFDRealtime`, `NewTimerFDBoottime` | `TFD_NONBLOCK | TFD_CLOEXEC` |
-| `NewSignalFD` | `SFD_NONBLOCK | SFD_CLOEXEC` |
-| `NewPidFD` | `PIDFD_NONBLOCK`；close-on-exec 由内核设置 |
-| `NewPidFDBlocking` | 阻塞 pidfd；close-on-exec 仍由内核设置 |
-| `NewMemFD`, `NewMemFDSealed`, `NewMemFDHugeTLB` | `MFD_CLOEXEC` 加 memfd 专用标志；不存在创建时 nonblocking 标志 |
+| `NewEventFD` | `EFD_NONBLOCK`, `EFD_CLOEXEC` |
+| `NewEventFDSemaphore` | `EFD_SEMAPHORE`, `EFD_NONBLOCK`, `EFD_CLOEXEC` |
+| `NewTimerFD`, `NewTimerFDRealtime`, `NewTimerFDBoottime` | `TFD_NONBLOCK`, `TFD_CLOEXEC` |
+| `NewSignalFD` | `SFD_NONBLOCK`, `SFD_CLOEXEC` |
+| `NewPidFD` | `PIDFD_NONBLOCK` |
+| `NewPidFDBlocking` | `0` |
+| `NewMemFD` | `MFD_CLOEXEC` |
+| `NewMemFDSealed` | `MFD_CLOEXEC`, `MFD_ALLOW_SEALING` |
+| `NewMemFDHugeTLB` | `MFD_CLOEXEC`, `MFD_HUGETLB` |
+
+即使标志参数为 `0`，`pidfd_open` 也会设置 `FD_CLOEXEC`。`memfd_create` 没有用于非阻塞 I/O 的创建标志。
 
 ### MemFD 内存映射
 
@@ -172,7 +184,6 @@ mfd.Close()
 - **原子操作**: `Raw`、`Valid` 和同一 `FD` 单元上的 `Close` 使用原子访问；调用方仍需在 `Close()` 前排空使用方
 - **所有权**: `Close()` 只对同一个 `FD` 单元幂等；复制出来的打开 `FD` 值不是独立所有者
 - **关闭顺序**: 只有在进行中的操作和借用的 raw 描述符使用方都排空后才调用 `Close()`
-- **有效性检查**: 在操作可能已关闭的描述符前使用 `Valid()`
 - **描述符复制**: 需要另一个可关闭描述符时使用 `Dup()` 或 `PidFD.GetFD()`
 - **MappedRegion 生命周期**: `Bytes()` 切片仅在区域映射期间有效
 
