@@ -1,7 +1,7 @@
 # iofd
 
 [![Go Reference](https://pkg.go.dev/badge/code.hybscloud.com/iofd.svg)](https://pkg.go.dev/code.hybscloud.com/iofd)
-[![Go Report Card](https://goreportcard.com/badge/github.com/hayabusa-cloud/iofd)](https://goreportcard.com/report/github.com/hayabusa-cloud/iofd)
+[![Benchmarks](https://github.com/hayabusa-cloud/iofd/actions/workflows/benchmarks.yml/badge.svg)](https://github.com/hayabusa-cloud/iofd/actions/workflows/benchmarks.yml)
 [![Codecov](https://codecov.io/gh/hayabusa-cloud/iofd/graph/badge.svg)](https://codecov.io/gh/hayabusa-cloud/iofd)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
@@ -90,38 +90,50 @@ if errors.Is(err, iox.ErrWouldBlock) {
 
 ### Operaciones de FD
 
+Esta función se encarga de cerrar `rawFd`, el descriptor de un archivo temporal abierto con `O_RDWR`. El archivo contiene `ab` y su posición inicial es 0.
+
 ```go
-// Crear FD desde descriptor raw
 fd := iofd.NewFD(rawFd)
-// NewFD toma la propiedad de cierre. No cierre valores FD copiados;
-// cierre solo después de drenar los usuarios. Use fd.Dup() para un
-// propietario de descriptor independiente.
+defer fd.Close()
 
-// Operaciones atómicas
-fd.Raw()           // Obtener valor int32 raw
-fd.Valid()         // Verificar si es válido (no negativo)
-fd.Close()         // Cierre de la misma celda tras drenar
+dup, err := fd.Dup() // Dos descriptores con una posición compartida.
+if err != nil {
+	return 0, err
+}
+defer dup.Close()
 
-// Operaciones de E/S
-fd.Read(buf)       // Leer bytes
-fd.Write(buf)      // Escribir bytes
-
-// Flags del descriptor
-fd.SetNonblock(true)   // Establecer O_NONBLOCK
-fd.SetCloexec(true)    // Establecer FD_CLOEXEC
-fd.Dup()               // Duplicar con CLOEXEC
+var buf [1]byte
+n, err := fd.Read(buf[:]) // Lee 'a' y avanza la posición compartida a 1.
+if err != nil {
+	return 0, err
+}
+return dup.Write(buf[:n]) // Sobrescribe la 'b'. El archivo queda con "aa".
 ```
+
+Si `rawFd` es prestado, mantén abierto el original hasta que termine `Dup` y cierra solo el duplicado.
+
+| Operación | Efecto |
+|-----------|------|
+| `fd.Raw()` | Devuelve el número del descriptor en préstamo (`int32`). Mantén `fd` abierto mientras uses ese número. |
+| `fd.Valid()` | Indica si el número de descriptor almacenado es mayor o igual que cero. Otra goroutine puede cerrar `fd` justo después de la comprobación. |
+| `fd.SetNonblock(true)` | Activa `O_NONBLOCK` para `fd` y sus duplicados. |
+| `fd.SetCloexec(true)` | Activa `FD_CLOEXEC` solo para `fd`. `Dup` lo activa automáticamente en el nuevo descriptor. |
 
 ### Flags de Constructores
 
-| Constructor | Flags predeterminados |
+| Constructor | Flags de creación |
 |-------------|-----------------------|
-| `NewEventFD`, `NewEventFDSemaphore` | `EFD_NONBLOCK | EFD_CLOEXEC` |
-| `NewTimerFD`, `NewTimerFDRealtime`, `NewTimerFDBoottime` | `TFD_NONBLOCK | TFD_CLOEXEC` |
-| `NewSignalFD` | `SFD_NONBLOCK | SFD_CLOEXEC` |
-| `NewPidFD` | `PIDFD_NONBLOCK`; close-on-exec lo establece el kernel |
-| `NewPidFDBlocking` | pidfd bloqueante; close-on-exec también lo establece el kernel |
-| `NewMemFD`, `NewMemFDSealed`, `NewMemFDHugeTLB` | `MFD_CLOEXEC` más flags específicos de memfd; no existe flag nonblocking en la creación |
+| `NewEventFD` | `EFD_NONBLOCK`, `EFD_CLOEXEC` |
+| `NewEventFDSemaphore` | `EFD_SEMAPHORE`, `EFD_NONBLOCK`, `EFD_CLOEXEC` |
+| `NewTimerFD`, `NewTimerFDRealtime`, `NewTimerFDBoottime` | `TFD_NONBLOCK`, `TFD_CLOEXEC` |
+| `NewSignalFD` | `SFD_NONBLOCK`, `SFD_CLOEXEC` |
+| `NewPidFD` | `PIDFD_NONBLOCK` |
+| `NewPidFDBlocking` | `0` |
+| `NewMemFD` | `MFD_CLOEXEC` |
+| `NewMemFDSealed` | `MFD_CLOEXEC`, `MFD_ALLOW_SEALING` |
+| `NewMemFDHugeTLB` | `MFD_CLOEXEC`, `MFD_HUGETLB` |
+
+`pidfd_open` activa `FD_CLOEXEC` incluso cuando recibe `0` como argumento de flags. `memfd_create` carece de un flag de creación para la E/S no bloqueante.
 
 ### Mapeo de Memoria MemFD
 
@@ -168,12 +180,17 @@ mfd.Close()
 
 **Nota**: Los handles especializados (`EventFD`, `TimerFD`, etc.) son primitivas del kernel específicas de Linux. En Darwin y FreeBSD, solo el tipo `FD` núcleo está disponible.
 
+## Benchmarks
+
+En Linux, `make bench` toma diez muestras de 200 ms por benchmark con `-cpu=1` e informa del tiempo y las asignaciones de memoria. Usa `make bench BENCH=EventFD` para ejecutar solo los benchmarks de eventfd.
+
+Para comparar dos revisiones, guarda la salida de cada una en la misma máquina, con las mismas versiones del kernel y de Go, y ejecuta `benchstat before.txt after.txt`. `BenchmarkEventFD_SignalWait` mide el tiempo conjunto de enviar una señal y esperar a recibirla. Los benchmarks de expiración del temporizador indican en `retries/op` cuántos reintentos requiere cada lectura completada.
+
 ## Consideraciones de Seguridad
 
 - **Operaciones Atómicas**: `Raw`, `Valid` y `Close` en la misma celda `FD` usan acceso atómico; el llamador aún debe drenar usuarios antes de `Close()`
 - **Propiedad**: `Close()` es idempotente para la misma celda `FD`; los valores `FD` abiertos y copiados no son propietarios independientes
 - **Orden de Cierre**: Llame `Close()` solo después de drenar las operaciones en curso y los usuarios de descriptores raw prestados
-- **Verificación de Validez**: Use `Valid()` antes de operaciones en descriptores potencialmente cerrados
 - **Duplicación**: Use `Dup()` o `PidFD.GetFD()` cuando necesite otro descriptor cerrable
 - **Vida Útil de MappedRegion**: El slice `Bytes()` solo es válido mientras la región esté mapeada
 

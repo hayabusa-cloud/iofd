@@ -1,0 +1,45 @@
+name: Benchmarks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  benchmarks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.27.x'
+
+      - name: Run Linux benchmarks
+        shell: bash
+        run: |
+          report="$RUNNER_TEMP/benchmarks.txt"
+          {
+            go version
+            uname -srm
+            make -s bench
+          } | tee "$report"
+          grep -q '^Benchmark.* ns/op' "$report"
+          {
+            echo '~~~text'
+            cat "$report"
+            echo '~~~'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: iofd-benchmarks
+          path: ${{ runner.temp }}/benchmarks.txt
+          if-no-files-found: error

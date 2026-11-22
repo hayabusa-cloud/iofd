@@ -7,6 +7,7 @@
 package iofd_test
 
 import (
+	"os"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -711,8 +712,12 @@ func BenchmarkEventFD_SignalWait(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_ = efd.Signal(1)
-		_, _ = efd.Wait()
+		if err := efd.Signal(1); err != nil {
+			b.Fatal(err)
+		}
+		if _, err := efd.Wait(); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
@@ -727,10 +732,14 @@ func BenchmarkEventFD_Signal(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_ = efd.Signal(1)
+		if err := efd.Signal(1); err != nil {
+			b.Fatal(err)
+		}
 	}
 	// Drain
-	_, _ = efd.Wait()
+	if _, err := efd.Wait(); err != nil {
+		b.Fatal(err)
+	}
 }
 
 func BenchmarkTimerFD_ArmDisarm(b *testing.B) {
@@ -744,8 +753,12 @@ func BenchmarkTimerFD_ArmDisarm(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_ = tfd.Arm(int64(time.Second), 0)
-		_ = tfd.Disarm()
+		if err := tfd.Arm(int64(time.Second), 0); err != nil {
+			b.Fatal(err)
+		}
+		if err := tfd.Disarm(); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
@@ -753,8 +766,13 @@ func BenchmarkEventFD_Create(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		efd, _ := iofd.NewEventFD(0)
-		_ = efd.Close()
+		efd, err := iofd.NewEventFD(0)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if err := efd.Close(); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
@@ -762,8 +780,13 @@ func BenchmarkTimerFD_Create(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		tfd, _ := iofd.NewTimerFD()
-		_ = tfd.Close()
+		tfd, err := iofd.NewTimerFD()
+		if err != nil {
+			b.Fatal(err)
+		}
+		if err := tfd.Close(); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
@@ -1322,17 +1345,28 @@ func BenchmarkSignalFD_Create(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		sfd, _ := iofd.NewSignalFD(mask)
-		_ = sfd.Close()
+		sfd, err := iofd.NewSignalFD(mask)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if err := sfd.Close(); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
 func BenchmarkPidFD_Create(b *testing.B) {
+	pid := os.Getpid()
 	b.ReportAllocs()
 
 	for b.Loop() {
-		pfd, _ := iofd.NewPidFD(1)
-		_ = pfd.Close()
+		pfd, err := iofd.NewPidFD(pid)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if err := pfd.Close(); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
@@ -1340,8 +1374,13 @@ func BenchmarkMemFD_Create(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		mfd, _ := iofd.NewMemFD("bench")
-		_ = mfd.Close()
+		mfd, err := iofd.NewMemFD("bench")
+		if err != nil {
+			b.Fatal(err)
+		}
+		if err := mfd.Close(); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
@@ -1356,7 +1395,9 @@ func BenchmarkMemFD_Truncate(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_ = mfd.Truncate(4096)
+		if err := mfd.Truncate(4096); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
@@ -1738,8 +1779,12 @@ func BenchmarkEventFD_ReadWrite(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_, _ = efd.Write(wbuf)
-		_, _ = efd.Read(rbuf)
+		if _, err := efd.Write(wbuf); err != nil {
+			b.Fatal(err)
+		}
+		if _, err := efd.Read(rbuf); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
@@ -1750,13 +1795,17 @@ func BenchmarkTimerFD_GetTime(b *testing.B) {
 	}
 	defer tfd.Close()
 
-	_ = tfd.Arm(int64(time.Hour), int64(time.Hour))
+	if err := tfd.Arm(int64(time.Hour), int64(time.Hour)); err != nil {
+		b.Fatal(err)
+	}
 
 	b.ResetTimer()
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_, _, _ = tfd.GetTime()
+		if _, _, err := tfd.GetTime(); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
@@ -1792,31 +1841,42 @@ func BenchmarkMemFD_Size(b *testing.B) {
 	}
 	defer mfd.Close()
 
-	_ = mfd.Truncate(4096)
+	if err := mfd.Truncate(4096); err != nil {
+		b.Fatal(err)
+	}
 
 	b.ResetTimer()
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_, _ = mfd.Size()
+		if _, err := mfd.Size(); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
-func BenchmarkMemFD_ReadWrite(b *testing.B) {
+func BenchmarkMemFD_PwritePread(b *testing.B) {
 	mfd, err := iofd.NewMemFD("bench-rw")
 	if err != nil {
 		b.Fatalf("NewMemFD failed: %v", err)
 	}
 	defer mfd.Close()
 
-	_ = mfd.Truncate(4096)
-	buf := make([]byte, 64)
+	var buf [64]byte
+	if err := mfd.Truncate(int64(len(buf))); err != nil {
+		b.Fatal(err)
+	}
 
 	b.ResetTimer()
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_, _ = mfd.Write(buf)
+		if n, err := mfd.Pwrite(buf[:], 0); err != nil || n != len(buf) {
+			b.Fatalf("Pwrite = %d, %v", n, err)
+		}
+		if n, err := mfd.Pread(buf[:], 0); err != nil || n != len(buf) {
+			b.Fatalf("Pread = %d, %v", n, err)
+		}
 	}
 }
 
@@ -1837,12 +1897,14 @@ func BenchmarkSignalFD_SetMask(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_ = sfd.SetMask(newMask)
+		if err := sfd.SetMask(newMask); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
 func BenchmarkPidFD_SendSignal(b *testing.B) {
-	pfd, err := iofd.NewPidFD(1)
+	pfd, err := iofd.NewPidFD(os.Getpid())
 	if err != nil {
 		b.Fatalf("NewPidFD failed: %v", err)
 	}
@@ -1853,7 +1915,9 @@ func BenchmarkPidFD_SendSignal(b *testing.B) {
 
 	for b.Loop() {
 		// Signal 0 just checks process existence
-		_ = pfd.SendSignal(0)
+		if err := pfd.SendSignal(0); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
@@ -3034,8 +3098,12 @@ func BenchmarkEventFD_Wait(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_ = efd.Signal(1)
-		_, _ = efd.Wait()
+		if err := efd.Signal(1); err != nil {
+			b.Fatal(err)
+		}
+		if _, err := efd.Wait(); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
@@ -3052,8 +3120,12 @@ func BenchmarkEventFD_WaitInto(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_ = efd.Signal(1)
-		_ = efd.WaitInto(&val)
+		if err := efd.Signal(1); err != nil {
+			b.Fatal(err)
+		}
+		if err := efd.WaitInto(&val); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
@@ -3068,7 +3140,9 @@ func BenchmarkTimerFD_Arm(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_ = tfd.Arm(int64(time.Hour), 0)
+		if err := tfd.Arm(int64(time.Hour), 0); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
@@ -3079,15 +3153,29 @@ func BenchmarkTimerFD_Expirations(b *testing.B) {
 	}
 	defer tfd.Close()
 
-	// Arm with very short timer
-	_ = tfd.Arm(1, 1) // 1ns initial, 1ns interval
+	// Keep the timer expiring while the benchmark reads it.
+	if err := tfd.Arm(1, 1); err != nil {
+		b.Fatal(err)
+	}
 
 	b.ResetTimer()
 	b.ReportAllocs()
 
+	var retries int
 	for b.Loop() {
-		_, _ = tfd.Expirations()
+		for {
+			_, err := tfd.Expirations()
+			if err == iox.ErrWouldBlock {
+				retries++
+				continue
+			}
+			if err != nil {
+				b.Fatal(err)
+			}
+			break
+		}
 	}
+	b.ReportMetric(float64(retries)/float64(b.N), "retries/op")
 }
 
 func BenchmarkTimerFD_ExpirationsInto(b *testing.B) {
@@ -3097,17 +3185,31 @@ func BenchmarkTimerFD_ExpirationsInto(b *testing.B) {
 	}
 	defer tfd.Close()
 
-	// Arm with very short timer
-	_ = tfd.Arm(1, 1) // 1ns initial, 1ns interval
+	// Keep the timer expiring while the benchmark reads it.
+	if err := tfd.Arm(1, 1); err != nil {
+		b.Fatal(err)
+	}
 
 	var count uint64
 
 	b.ResetTimer()
 	b.ReportAllocs()
 
+	var retries int
 	for b.Loop() {
-		_ = tfd.ExpirationsInto(&count)
+		for {
+			err := tfd.ExpirationsInto(&count)
+			if err == iox.ErrWouldBlock {
+				retries++
+				continue
+			}
+			if err != nil {
+				b.Fatal(err)
+			}
+			break
+		}
 	}
+	b.ReportMetric(float64(retries)/float64(b.N), "retries/op")
 }
 
 func BenchmarkTimerFD_GetTimeDuration(b *testing.B) {
@@ -3117,12 +3219,16 @@ func BenchmarkTimerFD_GetTimeDuration(b *testing.B) {
 	}
 	defer tfd.Close()
 
-	_ = tfd.ArmDuration(time.Hour, time.Hour)
+	if err := tfd.ArmDuration(time.Hour, time.Hour); err != nil {
+		b.Fatal(err)
+	}
 
 	b.ResetTimer()
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_, _, _ = tfd.GetTimeDuration()
+		if _, _, err := tfd.GetTimeDuration(); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
