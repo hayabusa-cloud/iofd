@@ -159,7 +159,7 @@ func (e *EventFD) Read(p []byte) (int, error) {
 	}
 	n, errno := zcall.Read(uintptr(raw), p[:8])
 	if errno != 0 {
-		return int(n), errFromErrno(errno)
+		return 0, errFromErrno(errno)
 	}
 	return int(n), nil
 }
@@ -178,7 +178,7 @@ func (e *EventFD) Write(p []byte) (int, error) {
 	}
 	n, errno := zcall.Write(uintptr(raw), p[:8])
 	if errno != 0 {
-		return int(n), errFromErrno(errno)
+		return 0, errFromErrno(errno)
 	}
 	return int(n), nil
 }
