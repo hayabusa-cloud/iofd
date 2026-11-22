@@ -209,7 +209,7 @@ func (s *SignalFD) Read(p []byte) (int, error) {
 		if errno == uintptr(zcall.EAGAIN) {
 			return 0, iox.ErrWouldBlock
 		}
-		return int(n), errFromErrno(errno)
+		return 0, errFromErrno(errno)
 	}
 	return int(n), nil
 }

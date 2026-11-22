@@ -1172,9 +1172,8 @@ func TestMemFD_PwriteSealed(t *testing.T) {
 
 	// Pwrite should fail with permission error
 	buf := []byte("test")
-	_, err = mfd.Pwrite(buf, 0)
-	if err == nil {
-		t.Error("Expected error writing to sealed memfd, got nil")
+	if n, err := mfd.Pwrite(buf, 0); n != 0 || err != iofd.ErrPermission {
+		t.Errorf("Pwrite to sealed memfd = (%d, %v), want (0, ErrPermission)", n, err)
 	}
 }
 
@@ -1191,9 +1190,8 @@ func TestMemFD_PreadNegativeOffset(t *testing.T) {
 
 	// Negative offset should fail
 	buf := make([]byte, 10)
-	_, err = mfd.Pread(buf, -1)
-	if err == nil {
-		t.Error("Expected error with negative offset, got nil")
+	if n, err := mfd.Pread(buf, -1); n != 0 || err != iofd.ErrInvalidParam {
+		t.Errorf("Pread at negative offset = (%d, %v), want (0, ErrInvalidParam)", n, err)
 	}
 }
 
@@ -2581,21 +2579,34 @@ func TestSigSet_OutOfRange(t *testing.T) {
 }
 
 // =============================================================================
-// EAGAIN Handling Tests for ReadInto methods
+// EAGAIN handling for byte reads and writes
 // =============================================================================
 
-func TestEventFD_ReadWouldBlock(t *testing.T) {
+func TestEventFD_ReadWriteWouldBlock(t *testing.T) {
 	efd, err := iofd.NewEventFD(0) // counter = 0
 	if err != nil {
 		t.Fatalf("NewEventFD failed: %v", err)
 	}
 	defer efd.Close()
 
-	// Read on empty counter should return ErrWouldBlock
-	buf := make([]byte, 8)
-	_, err = efd.Read(buf)
-	if err != iox.ErrWouldBlock {
-		t.Errorf("Expected ErrWouldBlock, got %v", err)
+	// The EventFD owns the descriptor for both handles.
+	fd := iofd.NewFD(efd.Fd())
+	handles := []iofd.ReadWriter{efd, &fd}
+	var buf [8]byte
+	for _, h := range handles {
+		if n, err := h.Read(buf[:]); n != 0 || err != iox.ErrWouldBlock {
+			t.Errorf("%T.Read on empty counter = (%d, %v), want (0, ErrWouldBlock)", h, n, err)
+		}
+	}
+
+	if err := efd.Signal(^uint64(0) - 1); err != nil {
+		t.Fatalf("fill counter: %v", err)
+	}
+	buf[0] = 1
+	for _, h := range handles {
+		if n, err := h.Write(buf[:]); n != 0 || err != iox.ErrWouldBlock {
+			t.Errorf("%T.Write on full counter = (%d, %v), want (0, ErrWouldBlock)", h, n, err)
+		}
 	}
 }
 

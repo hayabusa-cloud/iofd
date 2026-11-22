@@ -108,7 +108,7 @@ func (fd *FD) Close() error {
 }
 
 // Read reads up to len(p) bytes from the file descriptor.
-// Returns iox.ErrWouldBlock if the fd is non-blocking and no data is available.
+// If a non-blocking read would block, Read returns (0, iox.ErrWouldBlock).
 //
 // On EOF (read returns 0 bytes with no error), this returns (0, nil) rather than
 // (0, io.EOF). This is intentional for low-level I/O:
@@ -127,13 +127,13 @@ func (fd *FD) Read(p []byte) (int, error) {
 	}
 	n, errno := zcall.Read(uintptr(raw), p)
 	if errno != 0 {
-		return int(n), errFromErrno(errno)
+		return 0, errFromErrno(errno)
 	}
 	return int(n), nil
 }
 
-// Write writes len(p) bytes to the file descriptor.
-// Returns iox.ErrWouldBlock if the fd is non-blocking and cannot accept data.
+// Write writes up to len(p) bytes to the file descriptor.
+// If a non-blocking write would block, Write returns (0, iox.ErrWouldBlock).
 func (fd *FD) Write(p []byte) (int, error) {
 	if len(p) == 0 {
 		return 0, nil
@@ -144,7 +144,7 @@ func (fd *FD) Write(p []byte) (int, error) {
 	}
 	n, errno := zcall.Write(uintptr(raw), p)
 	if errno != 0 {
-		return int(n), errFromErrno(errno)
+		return 0, errFromErrno(errno)
 	}
 	return int(n), nil
 }

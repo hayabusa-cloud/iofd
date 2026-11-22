@@ -252,11 +252,9 @@ func TestTimerFD_Errors(t *testing.T) {
 		t.Error("Read should fail on closed fd")
 	}
 
-	// ReadInto should fail
 	buf := make([]byte, 8)
-	_, err = tfd.Read(buf)
-	if err == nil {
-		t.Error("ReadInto should fail on closed fd")
+	if n, err := tfd.Read(buf); n != 0 || err != ErrClosed {
+		t.Errorf("Read on closed timerfd = (%d, %v), want (0, ErrClosed)", n, err)
 	}
 
 	// GetTime should fail
@@ -1533,12 +1531,8 @@ func TestSignalFD_ReadNonEAGAINError(t *testing.T) {
 	zcall.Close(uintptr(rawFd))
 
 	buf := make([]byte, 128)
-	_, err = sfd.Read(buf)
-	if err == nil {
-		t.Error("Read should fail on closed fd")
-	}
-	if err == iox.ErrWouldBlock {
-		t.Error("Read should return non-EAGAIN error, got ErrWouldBlock")
+	if n, err := sfd.Read(buf); n != 0 || err != ErrClosed {
+		t.Errorf("Read on closed signalfd = (%d, %v), want (0, ErrClosed)", n, err)
 	}
 }
 
